@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  gascity:
+    image: gastownhall/gascity:latest
+    container_name: gascity
+    ports:
+      - "7375:7375"
+    volumes:
+      - ./gascity:/city
+      - gascity-data:/city/.gc
+    environment:
+      - GC_CITY_PATH=/city
+    restart: unless-stopped
+    command: gc start
+
+  telegram-bot:
+    build: ./bot
+    container_name: telegram-bot
+    depends_on:
+      - gascity
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GC_API=http://gascity:7375
+      - TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
+      - AGENT_NAME=you-agent
+      - BOT_NAME=Your Bot
+    volumes:
+      - ./config:/app/config
+      - ./miniapp-status:/app/status
+    restart: unless-stopped
+
+  telegram-bot-nordice:
+    build: ./bot
+    container_name: telegram-bot-nordice
+    depends_on:
+      - gascity
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN_NORDICE}
+      - GC_API=http://gascity:7375
+      - TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
+      - AGENT_NAME=nordice-agent
+      - BOT_NAME=Nordice Bot
+    volumes:
+      - ./config:/app/config
+      - ./miniapp-status:/app/status
+    restart: unless-stopped
+
+  miniapp:
+    image: nginx:alpine
+    container_name: miniapp
+    ports:
+      - "8080:80"
+    volumes:
+      - ./miniapp:/usr/share/nginx/html:ro
+      - ./miniapp-status:/usr/share/nginx/html/status:rw
+    restart: unless-stopped
+
+volumes:
+  gascity-data:

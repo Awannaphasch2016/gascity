@@ -1,0 +1,50 @@
+═══════════════════════════════════════════════════════════════════
+   📦 GAS CITY DEPLOYMENT PACKAGE - DOWNLOAD INSTRUCTIONS
+═══════════════════════════════════════════════════════════════════
+
+Your deployment package is ready at:
+  /workspace/gascity-aws-deploy/
+
+OPTION 1: Download via Cursor
+─────────────────────────────
+The folder is in your Cursor workspace. You can:
+1. Open Cursor File Explorer
+2. Navigate to /workspace/gascity-aws-deploy/
+3. Right-click → Download folder
+
+OPTION 2: Download Compressed Archive
+──────────────────────────────────────
+File: /workspace/gascity-aws-deploy.tar.gz
+Size: ~10KB
+
+To download:
+1. In Cursor, find the file browser
+2. Navigate to /workspace/
+3. Right-click gascity-aws-deploy.tar.gz → Download
+
+Then extract:
+  tar -xzf gascity-aws-deploy.tar.gz
+  cd gascity-aws-deploy
+
+OPTION 3: Copy-Paste Individual Files
+──────────────────────────────────────
+If you can't download, I can show you each file's contents
+and you can copy-paste them locally.
+
+═══════════════════════════════════════════════════════════════════
+
+AFTER DOWNLOADING, RUN:
+
+1. Setup Doppler:
+   $ cd gascity-aws-deploy
+   $ ./setup-doppler.sh
+
+2. Edit Telegram IDs:
+   $ nano config/responsibilities.json
+
+3. Deploy to AWS:
+   $ doppler run -- ./deploy.sh
+
+That's it! 🚀
+
+═══════════════════════════════════════════════════════════════════

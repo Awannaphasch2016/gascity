@@ -1,0 +1,14 @@
+[city]
+name = "my-city"
+
+[session]
+provider = "tmux"
+
+[extmsg]
+enabled = true
+
+[[agent]]
+name = "deploy-agent"
+provider = "claude"
+prompt_file = "agents/deploy-agent/prompt.md"
+dir = "."

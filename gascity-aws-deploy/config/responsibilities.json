@@ -1,0 +1,56 @@
+{
+  "users": {
+    "you": {
+      "telegram_id": 0,
+      "telegram_username": "@yourname",
+      "responsibilities": [
+        "deployment_approval",
+        "architecture_review",
+        "budget_approval"
+      ]
+    },
+    "nordice": {
+      "telegram_id": 0,
+      "telegram_username": "@nordice",
+      "responsibilities": [
+        "security_review",
+        "code_review",
+        "deployment_approval"
+      ]
+    }
+  },
+  
+  "responsibility_definitions": {
+    "deployment_approval": {
+      "name": "Deployment Approval",
+      "description": "Approve production deployments",
+      "icon": "🚀",
+      "requires_multiple": true,
+      "required_count": 2
+    },
+    "security_review": {
+      "name": "Security Review",
+      "description": "Review security implications",
+      "icon": "🔒",
+      "requires_multiple": false
+    },
+    "code_review": {
+      "name": "Code Review",
+      "description": "Review code changes",
+      "icon": "👨‍💻",
+      "requires_multiple": false
+    },
+    "architecture_review": {
+      "name": "Architecture Review",
+      "description": "Review architectural decisions",
+      "icon": "🏗️",
+      "requires_multiple": false
+    },
+    "budget_approval": {
+      "name": "Budget Approval",
+      "description": "Approve spending",
+      "icon": "💰",
+      "requires_multiple": false
+    }
+  }
+}

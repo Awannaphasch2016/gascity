@@ -1,0 +1,43 @@
+╔═══════════════════════════════════════════════════════════════════╗
+║        📱 MOBILE USER - HOW TO GET YOUR DEPLOYMENT FILES          ║
+╚═══════════════════════════════════════════════════════════════════╝
+
+Since you're on mobile, here are your best options:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ OPTION 1: Access from Computer Later (Easiest)                 │
+└─────────────────────────────────────────────────────────────────┘
+
+1. 📌 BOOKMARK this conversation in your phone
+2. Later, open it on your computer
+3. Files are in: /workspace/gascity-aws-deploy/
+4. Copy-paste or download from there
+
+┌─────────────────────────────────────────────────────────────────┐
+│ OPTION 2: Email Yourself a Link                                │
+└─────────────────────────────────────────────────────────────────┘
+
+Ask me to create a Pastebin or GitHub Gist with all files.
+I can give you a simple link to open on your computer.
+
+┌─────────────────────────────────────────────────────────────────┐
+│ OPTION 3: I Show You the Single Command                        │
+└─────────────────────────────────────────────────────────────────┘
+
+I can give you ONE simple command to run on your computer that:
+- Downloads everything automatically
+- Sets up Doppler
+- Deploys to AWS
+
+All in one go!
+
+╔═══════════════════════════════════════════════════════════════════╗
+║  💡 RECOMMENDED: Open this chat on your computer, then copy      ║
+║     the files. Everything is ready in /workspace/!               ║
+╚═══════════════════════════════════════════════════════════════════╝
+
+What works best for you?
+1. Access from computer later
+2. Get a link/gist
+3. One-liner command
+4. Something else
