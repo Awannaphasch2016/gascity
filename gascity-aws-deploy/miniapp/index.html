@@ -1,209 +1,234 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Landing Page Builder - Status</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Northwind Analytics</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --accent: #4f46e5;
+      --accent-soft: #eef2ff;
+      --bg: #ffffff;
+    }
 
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
-        }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
 
-        .header h1 {
-            font-size: 24px;
-            margin-bottom: 10px;
-        }
+    .wrap {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
 
-        .header p {
-            opacity: 0.9;
-            font-size: 14px;
-        }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding: 20px 0;
+    }
 
-        .status-list {
-            padding: 20px;
-        }
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
 
-        .status-item {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 15px;
-            border-left: 4px solid #e0e0e0;
-            transition: all 0.3s ease;
-        }
+    .brand {
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -0.01em;
+    }
 
-        .status-item.approved {
-            background: #e8f5e9;
-            border-left-color: #4caf50;
-        }
+    .nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 15px;
+      margin-left: 28px;
+    }
 
-        .status-item.pending {
-            background: #fff3e0;
-            border-left-color: #ff9800;
-        }
+    .nav a:hover { color: var(--ink); }
 
-        .status-item h3 {
-            font-size: 18px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
+    /* Hero */
+    .hero {
+      padding: 96px 0 80px;
+      text-align: center;
+    }
 
-        .status-icon {
-            font-size: 24px;
-        }
+    .hero h1 {
+      font-size: clamp(32px, 5vw, 54px);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 20px;
+    }
 
-        .status-meta {
-            font-size: 14px;
-            color: #666;
-            margin-top: 5px;
-        }
+    .hero p {
+      font-size: 19px;
+      color: var(--muted);
+      max-width: 620px;
+      margin: 0 auto 32px;
+    }
 
-        .approved-by {
-            display: inline-block;
-            background: rgba(76, 175, 80, 0.1);
-            color: #2e7d32;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 500;
-            margin-top: 8px;
-        }
+    .btn {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 16px;
+      padding: 14px 28px;
+      border-radius: 10px;
+    }
 
-        .footer {
-            padding: 20px;
-            text-align: center;
-            border-top: 1px solid #e0e0e0;
-            font-size: 12px;
-            color: #666;
-        }
+    .btn:hover { background: #4338ca; }
 
-        .refresh-indicator {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            background: #4caf50;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-            margin-right: 5px;
-        }
+    /* Features */
+    .features {
+      padding: 72px 0;
+      border-top: 1px solid var(--line);
+    }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      text-align: center;
+      margin-bottom: 12px;
+    }
 
-        .last-updated {
-            text-align: center;
-            padding: 10px;
-            font-size: 12px;
-            color: #999;
-        }
-    </style>
+    .features h2 {
+      font-size: 32px;
+      letter-spacing: -0.02em;
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 28px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 28px;
+    }
+
+    .card .icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: var(--accent-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+
+    .card h3 {
+      font-size: 17px;
+      margin-bottom: 8px;
+    }
+
+    .card p {
+      font-size: 15px;
+      color: var(--muted);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 40px 0;
+      margin-top: 40px;
+    }
+
+    .foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .foot a {
+      color: var(--muted);
+      text-decoration: none;
+      margin-left: 24px;
+    }
+
+    .foot a:hover { color: var(--ink); }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🏗️ Landing Page Builder</h1>
-            <p>Software Factory Demo</p>
-        </div>
-
-        <div class="status-list" id="statusList">
-            <!-- Sections will be dynamically populated -->
-        </div>
-
-        <div class="last-updated">
-            <span class="refresh-indicator"></span>
-            <span id="lastUpdated">Loading...</span>
-        </div>
-
-        <div class="footer">
-            Gas City Software Factory • Human-in-the-Loop Demo
-        </div>
+  <header>
+    <div class="wrap nav">
+      <div class="brand">Northwind Analytics</div>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#">Pricing</a>
+        <a href="#">Docs</a>
+      </nav>
     </div>
+  </header>
 
-    <script>
-        const sections = [
-            { id: 'hero', name: 'Hero Section', icon: '🎯' },
-            { id: 'features', name: 'Features Section', icon: '⭐' },
-            { id: 'auth', name: 'Auth Form', icon: '🔐' },
-            { id: 'footer', name: 'Footer Section', icon: '📄' },
-            { id: 'deployment', name: 'Final Deployment', icon: '🚀' }
-        ];
+  <section class="hero">
+    <div class="wrap">
+      <h1>Know what your data is doing</h1>
+      <p>
+        Northwind turns the events your product already emits into dashboards your
+        team will actually open. No pipeline to build, no warehouse to babysit.
+      </p>
+      <a class="btn" href="#">Start free</a>
+    </div>
+  </section>
 
-        async function fetchSectionStatus(sectionId) {
-            try {
-                const response = await fetch(`/status/${sectionId}.json?_=${Date.now()}`);
-                if (response.ok) {
-                    return await response.json();
-                }
-            } catch (e) {
-                console.log(`Section ${sectionId} not yet available`);
-            }
-            return { status: 'pending', approved_by: null, approved_at: null };
-        }
+  <section class="features" id="features">
+    <div class="wrap">
+      <p class="section-title">Features</p>
+      <h2>Built for teams that ship</h2>
+      <div class="grid">
+        <div class="card">
+          <div class="icon">📊</div>
+          <h3>Live dashboards</h3>
+          <p>Charts update as events arrive, so you are never reading yesterday's numbers.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🔍</div>
+          <h3>Ad-hoc queries</h3>
+          <p>Ask a question in plain language and get a chart you can pin or share.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🔔</div>
+          <h3>Alerts that matter</h3>
+          <p>Set a threshold once and hear about it only when something actually moves.</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
-        async function updateUI() {
-            const container = document.getElementById('statusList');
-            container.innerHTML = '';
-
-            for (const section of sections) {
-                const status = await fetchSectionStatus(section.id);
-                
-                const div = document.createElement('div');
-                div.className = `status-item ${status.status}`;
-                
-                const statusIcon = status.status === 'approved' ? '✅' : '⏳';
-                const statusText = status.status === 'approved' ? 'Deployed' : 'Awaiting Approval';
-                
-                let html = `
-                    <h3>
-                        <span class="status-icon">${section.icon}</span>
-                        ${section.name}
-                        <span style="margin-left: auto; font-size: 16px;">${statusIcon}</span>
-                    </h3>
-                    <div class="status-meta">Status: ${statusText}</div>
-                `;
-                
-                if (status.status === 'approved' && status.approved_by) {
-                    html += `<div class="approved-by">✓ Approved by ${status.approved_by}</div>`;
-                }
-                
-                div.innerHTML = html;
-                container.appendChild(div);
-            }
-
-            document.getElementById('lastUpdated').textContent = 
-                `Last updated: ${new Date().toLocaleTimeString()}`;
-        }
-
-        // Initial load
-        updateUI();
-
-        // Refresh every 2 seconds
-        setInterval(updateUI, 2000);
-    </script>
+  <footer>
+    <div class="wrap foot">
+      <div>© 2026 Northwind Analytics</div>
+      <nav>
+        <a href="#">Privacy</a>
+        <a href="#">Terms</a>
+        <a href="#">Contact</a>
+      </nav>
+    </div>
+  </footer>
 </body>
 </html>

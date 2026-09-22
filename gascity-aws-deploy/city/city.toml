@@ -13,6 +13,16 @@
 name = "factory"
 provider = "cursor"
 
+# Injected into every session so agents/builder/reply.sh can publish a reply
+# without the agent having to discover any of it. The port is the supervisor's
+# documented default; override it here if ~/.gc/supervisor.toml changes it.
+# Note this is the supervisor listener, not city.toml's own [api] port.
+[workspace.env]
+GC_REPLY_URL = "http://127.0.0.1:8372/v0/city/factory/extmsg/outbound"
+GC_PROVIDER_NAME = "telegram"
+GC_ACCOUNT_ID = "factory"
+GC_CONVERSATION_ID = "landing-page"
+
 # Referencing a builtin provider still requires declaring it in the catalog.
 # builtin:cursor resolves to `cursor-agent -f --trust` and authenticates from
 # CURSOR_API_KEY.
