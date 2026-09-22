@@ -46,11 +46,12 @@ import bridge as mod
 # The agent is a cursor-agent session on a pinned model; a cold first turn has
 # been measured at ~70s, and it re-reads the page before answering.
 AGENT_TIMEOUT = 300.0
-# A human is reading their phone, possibly for the first time in an hour. A
-# step that times out is rerunnable on its own with --step, so this is generous
-# rather than tight.
-HUMAN_TIMEOUT = 1800.0
+# A human is reading their phone, possibly for the first time in an hour. Raise
+# it with --human-timeout; a rerun adopts the request already waiting rather
+# than sending a second one, so a timeout costs nothing but the wait.
+HUMAN_TIMEOUT = 3600.0
 POLL_INTERVAL = 3.0
+HEARTBEAT_INTERVAL = 300.0
 
 
 class DrillFailure(Exception):
@@ -162,14 +163,25 @@ class Report:
 
 
 def wait_for(probe: Callable[[], Any], timeout: float, what: str) -> Any:
-    """Poll until probe returns something truthy, or give up loudly."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    """Poll until probe returns something truthy, or give up loudly.
+
+    Reports that it is still alive while it waits, because the log is the only
+    way to tell a drill waiting on a person from one that has hung.
+    """
+    start = time.monotonic()
+    next_beat = start + HEARTBEAT_INTERVAL
+    while True:
         value = probe()
         if value:
             return value
+        now = time.monotonic()
+        if now - start >= timeout:
+            raise DrillFailure(f"timed out after {timeout:.0f}s waiting for {what}")
+        if now >= next_beat:
+            print(f"        still waiting for {what} "
+                  f"({(now - start) / 60:.0f}m elapsed)")
+            next_beat = now + HEARTBEAT_INTERVAL
         time.sleep(POLL_INTERVAL)
-    raise DrillFailure(f"timed out after {timeout:.0f}s waiting for {what}")
 
 
 def page_digest(path: str) -> str:
@@ -185,21 +197,35 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
           f"({step.responsibility}) ===")
 
     before_digest = page_digest(page)
-    seen_ids = {entry["id"] for entry in ledger.approvals()}
-    seen_turns = len(ledger.turns())
+    existing = ledger.approvals()
+    seen_ids = {entry["id"] for entry in existing}
 
-    actor = cfg.users[step.sender]
-    gc.send_inbound(step.request, str(actor["telegram_id"]), step.sender)
-    report.note(f'sent as {step.sender}: "{step.request}"')
+    # A step that already has an unanswered request adopts it rather than asking
+    # again. Reruns are the normal way to use this drill, and a second identical
+    # approval message — with only one of the two that counts — is worse for the
+    # person deciding than no drill at all.
+    entry = next(
+        (candidate for candidate in existing
+         if candidate["responsibility"] == step.responsibility
+         and not candidate["resolved"]),
+        None,
+    )
+    if entry is not None:
+        report.note(f'adopting the {step.responsibility} request already open: '
+                    f'"{entry["title"]}"')
+    else:
+        actor = cfg.users[step.sender]
+        gc.send_inbound(step.request, str(actor["telegram_id"]), step.sender)
+        report.note(f'sent as {step.sender}: "{step.request}"')
 
-    def new_approval() -> dict[str, Any] | None:
-        for entry in ledger.approvals():
-            if entry["id"] not in seen_ids:
-                return entry
-        return None
+        def new_approval() -> dict[str, Any] | None:
+            for candidate in ledger.approvals():
+                if candidate["id"] not in seen_ids:
+                    return candidate
+            return None
 
-    report.note(f"waiting up to {AGENT_TIMEOUT:.0f}s for the agent to ask someone...")
-    entry = wait_for(new_approval, AGENT_TIMEOUT, "the agent to request approval")
+        report.note(f"waiting up to {AGENT_TIMEOUT:.0f}s for the agent to ask someone...")
+        entry = wait_for(new_approval, AGENT_TIMEOUT, "the agent to request approval")
 
     report.check("responsibility", entry["responsibility"], step.responsibility)
     report.check("routed to", sorted(entry["asked"]), sorted(step.asked))
@@ -210,6 +236,10 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
     print(f"\n  >>> On your phone: {step.instruction}\n")
 
     approval_id = entry["id"]
+    # Counted here rather than at the top of the step: the turn that asked for
+    # this approval is already in the log, and what matters is what the agent
+    # does *after* the decision.
+    seen_turns = len(ledger.turns())
 
     def resolved() -> dict[str, Any] | None:
         for candidate in ledger.approvals():
@@ -248,6 +278,8 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
 
 def main() -> int:
     """Run every step in order and report whether the routing held."""
+    global HUMAN_TIMEOUT
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bridge", default=os.getenv("BRIDGE_URL", "http://127.0.0.1:8081"),
                         help="base URL of the bridge's callback listener")
@@ -255,7 +287,10 @@ def main() -> int:
                         help="the page the agent edits")
     parser.add_argument("--step", type=int, default=0,
                         help="run only this step (1-based); default runs all")
+    parser.add_argument("--human-timeout", type=float, default=HUMAN_TIMEOUT,
+                        help="seconds to wait for each decision")
     args = parser.parse_args()
+    HUMAN_TIMEOUT = args.human_timeout
 
     # The bridge gets GC_API from its systemd unit rather than its env file, so
     # a shell that sourced only the env file is still missing it.
