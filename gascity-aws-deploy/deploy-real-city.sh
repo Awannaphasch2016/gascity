@@ -47,17 +47,37 @@ cursor-agent --version
 REMOTE_SCRIPT
 
 echo "==> installing tmux and python deps"
-"${SSH[@]}" 'sudo apt-get update -qq && sudo apt-get install -y -qq tmux python3-pip >/dev/null && pip3 install --quiet --break-system-packages flask requests'
+# --break-system-packages only exists on pip >= 23; this host predates it.
+# jq is a hard gc init dependency; the agent's reply script needs curl and
+# python3; tmux is the session runtime; git lets the agent's edits be diffable.
+"${SSH[@]}" 'sudo apt-get update -qq && sudo apt-get install -y -qq tmux python3-pip curl jq git >/dev/null
+pip3 install --quiet --break-system-packages flask requests 2>/dev/null \
+  || pip3 install --quiet flask requests
+python3 -c "import flask, requests; print(\"python deps ok\")"'
 
 echo "==> stopping the Flask mock"
 # The mock owns port 7375 and would answer routes the bridge no longer calls.
-"${SSH[@]}" 'pkill -f simple_gc_api || true; pkill -f telegram_bot.py || true'
+# The bracket in [s]imple_gc_api keeps the pattern from matching pkill's own
+# command line, which otherwise kills this very SSH shell and ends the deploy
+# silently. sudo because the mock was started as root; || true because pkill
+# exits 1 when nothing matches, the normal case on a rerun.
+"${SSH[@]}" 'sudo pkill -f "[s]imple_gc_api" || true; sudo pkill -f "[t]elegram_bot.py" || true; echo "mock stopped"'
 
 echo "==> uploading gc binary"
 # Built from this repo rather than fetched: there is no published release for
 # this fork, and the raw-CDN path served stale files during earlier deploys.
+# CGO_ENABLED=0 is required, not a preference. A default build links ICU
+# dynamically and the target host runs Ubuntu 22.04 (libicu70) while a current
+# build host has libicu74, so the binary dies on startup with
+# "libicui18n.so.74: cannot open shared object file".
 if [ ! -x ./gc ]; then
-  echo "error: ./gc not found. Build it first: go build -o gascity-aws-deploy/gc ./cmd/gc" >&2
+  echo "error: ./gc not found. Build it first:" >&2
+  echo "  CGO_ENABLED=0 go build -o gascity-aws-deploy/gc ./cmd/gc" >&2
+  exit 1
+fi
+if ldd ./gc >/dev/null 2>&1; then
+  echo "error: ./gc is dynamically linked and will not start on the target host." >&2
+  echo "  Rebuild with: CGO_ENABLED=0 go build -o gascity-aws-deploy/gc ./cmd/gc" >&2
   exit 1
 fi
 scp "${SSH_OPTS[@]}" ./gc "ubuntu@${HOST}:/tmp/gc"
@@ -70,11 +90,40 @@ scp "${SSH_OPTS[@]}" ./config/responsibilities.json "ubuntu@${HOST}:${REMOTE}/co
 scp "${SSH_OPTS[@]}" ./bot/bridge.py ./bot/requirements.txt "ubuntu@${HOST}:${REMOTE}/bot/"
 scp "${SSH_OPTS[@]}" ./test_extmsg_protocol.py "ubuntu@${HOST}:${REMOTE}/"
 
+# Seed the page the agent edits, but never overwrite it on a re-deploy: the
+# agent's approved edits live in this file and are the point of the exercise.
+# Delete it on the host to reset to the baseline deliberately.
+echo "==> seeding the landing page if absent"
+scp "${SSH_OPTS[@]}" ./miniapp/index.html "ubuntu@${HOST}:/tmp/index.html.baseline"
+"${SSH[@]}" bash -s <<REMOTE_SCRIPT
+set -euo pipefail
+sudo mkdir -p ${REMOTE}/miniapp
+if [ -s ${REMOTE}/miniapp/index.html ] && grep -q 'Northwind' ${REMOTE}/miniapp/index.html; then
+  echo "page already seeded; leaving the agent's edits in place"
+else
+  sudo cp -f /tmp/index.html.baseline ${REMOTE}/miniapp/index.html
+  echo "page seeded from baseline"
+fi
+sudo chown -R ubuntu:ubuntu ${REMOTE}/miniapp
+# git makes the agent's edits diffable, which is how you audit what it changed.
+if [ ! -d ${REMOTE}/miniapp/.git ]; then
+  cd ${REMOTE}/miniapp
+  git init -q
+  git config user.email factory@localhost
+  git config user.name "Gas City factory"
+  git add -A && git commit -qm "baseline landing page"
+  echo "git initialized for the page"
+fi
+REMOTE_SCRIPT
+
 echo "==> writing environment"
 "${SSH[@]}" "cat > ${REMOTE}/factory.env" <<ENV_FILE
 CURSOR_API_KEY=${CURSOR_API_KEY}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_BOT_TOKEN_NORDICE=${TELEGRAM_BOT_TOKEN_NORDICE}
+# The host has no bd binary, so use the file-backed bead store rather than
+# bootstrapping Dolt on a 2-vCPU box.
+GC_BEADS=file
 GC_CITY_NAME=factory
 GC_ACCOUNT_ID=factory
 GC_CONVERSATION_ID=landing-page
@@ -84,6 +133,23 @@ BRIDGE_PORT=8081
 PAGE_URL=http://${HOST}:8080/
 ENV_FILE
 "${SSH[@]}" "chmod 600 ${REMOTE}/factory.env"
+
+# gc installs itself as a systemd --user service, which inherits nothing from
+# this SSH session. Without this drop-in, CURSOR_API_KEY never reaches the
+# agents the supervisor spawns and every one of them boots to a login prompt.
+# A drop-in rather than an edit, because gc regenerates the unit on install.
+echo "==> giving the supervisor service its environment"
+"${SSH[@]}" bash -s <<REMOTE_SCRIPT
+set -euo pipefail
+dropin="\$HOME/.config/systemd/user/gascity-supervisor.service.d"
+mkdir -p "\$dropin"
+cat > "\$dropin/factory.conf" <<UNIT
+[Service]
+EnvironmentFile=${REMOTE}/factory.env
+UNIT
+systemctl --user daemon-reload 2>/dev/null || true
+echo "drop-in installed"
+REMOTE_SCRIPT
 
 echo "==> starting the city"
 "${SSH[@]}" bash -s <<REMOTE_SCRIPT
@@ -95,9 +161,18 @@ cd ${REMOTE}/city
 # --preserve-existing keeps the committed city.toml and prompt template.
 # gc doctor --fix is deliberately not used: it rewrites city.toml and drops
 # [[agent]] blocks.
+# --name factory is load-bearing: the runtime city name otherwise comes from the
+# directory basename ("city"), and city.toml's GC_REPLY_URL addresses the city by
+# name, so a mismatch makes every agent reply 404.
 if [ ! -d .gc ]; then
-  ${REMOTE}/gc init --file city.toml --preserve-existing --no-start .
+  ${REMOTE}/gc init --file city.toml --preserve-existing --no-start --name factory .
 fi
+
+# Restart the service so it re-reads the drop-in. A supervisor already running
+# from a previous deploy still holds the old, key-less environment.
+systemctl --user restart gascity-supervisor 2>/dev/null || true
+sleep 5
+
 ${REMOTE}/gc start
 ${REMOTE}/gc status
 REMOTE_SCRIPT

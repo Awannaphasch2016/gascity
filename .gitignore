@@ -86,3 +86,4 @@ __pycache__/
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/
 .beads.backup-*
+gascity-aws-deploy/gc
