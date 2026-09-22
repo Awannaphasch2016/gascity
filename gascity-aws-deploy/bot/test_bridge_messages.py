@@ -12,15 +12,7 @@ Run: python3 -m pytest bot/test_bridge_messages.py
 
 from __future__ import annotations
 
-import os
-import sys
-import tempfile
-import json
 from html.parser import HTMLParser
-
-import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Tags Telegram accepts in HTML parse mode, restricted to the ones the bridge
 # emits. Anything else reaching Telegram is a rejected message.
@@ -55,56 +47,6 @@ def parse(message: str) -> Markup:
     m.feed(message)
     m.close()
     return m
-
-
-@pytest.fixture
-def bridge():
-    """A Bridge wired to config on disk, with no network calls made."""
-    doc = {
-        "users": {
-            "you": {
-                "telegram_id": 1,
-                "telegram_username": "@you",
-                "bot_token_env": "TOK_YOU",
-                "responsibilities": ["architecture_review"],
-            },
-            "nordice": {
-                "telegram_id": 2,
-                "telegram_username": "@nordice",
-                "bot_token_env": "TOK_NORDICE",
-                "responsibilities": ["security_review"],
-            },
-        },
-        "responsibility_definitions": {
-            "architecture_review": {
-                "name": "Architecture Review",
-                "icon": "\N{BUILDING CONSTRUCTION}",
-                "requires_multiple": False,
-            },
-            "security_review": {
-                "name": "Security Review",
-                "icon": "\N{LOCK}",
-                "requires_multiple": False,
-            },
-        },
-    }
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
-        json.dump(doc, fh)
-        path = fh.name
-
-    os.environ.update({
-        "GC_API": "http://127.0.0.1:8372",
-        "GC_CITY_NAME": "test",
-        "BRIDGE_CALLBACK_URL": "http://127.0.0.1:8099",
-        "CONFIG_PATH": path,
-        "TOK_YOU": "t1",
-        "TOK_NORDICE": "t2",
-        "PAGE_URL": "http://example.test:8080/",
-    })
-    import bridge as mod
-
-    yield mod.Bridge(mod.Config())
-    os.unlink(path)
 
 
 def test_agent_turn_keeps_underscores_literal(bridge):

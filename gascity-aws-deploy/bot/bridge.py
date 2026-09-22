@@ -110,12 +110,10 @@ class Config:
             return int(spec.get("required_count", 2))
         return 1
 
-    def user_by_telegram_id(self, telegram_id: int) -> str | None:
-        """Return the username owning a Telegram account id, or None."""
-        for name, user in self.users.items():
-            if int(user.get("telegram_id", 0)) == telegram_id:
-                return name
-        return None
+    def owns_account(self, name: str, telegram_id: int) -> bool:
+        """Report whether a configured user acts from a Telegram account."""
+        user = self.users.get(name)
+        return user is not None and int(user.get("telegram_id", 0)) == telegram_id
 
 
 class PendingApproval:
@@ -447,29 +445,39 @@ class Bridge:
                     log.exception("handling update %s for %s", update.get("update_id"), user)
 
     def _dispatch(self, user: str, update: dict[str, Any]) -> None:
-        """Route one Telegram update to the right handler."""
+        """Route one Telegram update to the reviewer whose bot received it.
+
+        The bot identifies the reviewer; the sender's Telegram account only
+        authorizes them. Two reviewers may share one account — the deployed
+        config has both on a single phone, each with their own bot — so deriving
+        the actor from the sender's id resolves every update to whichever user
+        happens to come first in responsibilities.json. That failure is quiet and
+        total: the other reviewer's exclusive responsibilities become
+        unapprovable by anyone, and a responsibility needing two approvals can
+        never reach two.
+        """
         if "callback_query" in update:
             query = update["callback_query"]
-            sender = self.cfg.user_by_telegram_id(query["from"]["id"])
-            if sender is None:
-                self.tg.answer_callback(user, query["id"], "You are not a configured user.")
+            if not self.cfg.owns_account(user, query["from"]["id"]):
+                self.tg.answer_callback(
+                    user, query["id"], "You are not this bot's reviewer."
+                )
                 return
-            self.on_button(sender, query["id"], query.get("data", ""))
+            self.on_button(user, query["id"], query.get("data", ""))
             return
 
         message = update.get("message")
         if not message or "text" not in message:
             return
         telegram_id = message["from"]["id"]
-        sender = self.cfg.user_by_telegram_id(telegram_id)
-        if sender is None:
+        if not self.cfg.owns_account(user, telegram_id):
             self.tg.send(
                 user, telegram_id,
-                "You are not a configured user of this city. Add your Telegram ID to "
-                "responsibilities.json.",
+                "This bot answers to a different Telegram account. Set this user's "
+                "telegram_id in responsibilities.json to act as them.",
             )
             return
-        self.on_message(sender, telegram_id, message["text"])
+        self.on_message(user, telegram_id, message["text"])
 
 
 def create_app(bridge: Bridge) -> Flask:
