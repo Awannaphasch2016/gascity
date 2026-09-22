@@ -25,11 +25,12 @@ base = "builtin:cursor"
 port = 7375
 bind = "127.0.0.1"
 
-# Inbound conversations with no existing binding go to the builder agent.
-# "llm-client" is the provider name an HTTP client registers under via
-# POST /v0/extmsg/clients. The first inbound turn makes the binding sticky.
+# Inbound conversations with no existing binding go to the builder agent. The
+# provider must match what the bridge registers as via
+# POST /v0/city/{city}/extmsg/adapters. The first inbound turn binds the
+# conversation to the agent, so the route is sticky afterwards.
 [[extmsg.default_route]]
-provider = "llm-client"
+provider = "telegram"
 agent = "builder"
 
 [[agent]]
