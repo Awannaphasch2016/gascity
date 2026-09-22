@@ -74,7 +74,38 @@ def test_the_drill_covers_every_routing_shape(deployed) -> None:
     assert len(set(single)) == len(single), "two steps route to the same lone reviewer"
 
 
-def test_the_drill_exercises_both_answers(deployed) -> None:
-    """A rejection and an approval are different code paths for the agent."""
-    answers = {step.approve for step in drill_routing.STEPS}
-    assert answers == {True, False}
+def test_the_drill_suggests_both_answers(deployed) -> None:
+    """A refusal and an approval are different code paths for the agent.
+
+    The reviewer is free to answer either way and the drill checks whatever they
+    chose, so these suggestions are the only thing steering one full run through
+    both paths.
+    """
+    suggestions = [step.suggest.upper() for step in drill_routing.STEPS]
+    assert any("REJECT" in text for text in suggestions), "no step suggests a refusal"
+    assert any("APPROVE" in text for text in suggestions), "no step suggests an approval"
+
+
+def test_a_suggested_refusal_lands_on_a_step_that_would_edit(deployed) -> None:
+    """A refusal only proves something where an approval would have changed the page."""
+    refusals = [step for step in drill_routing.STEPS if "REJECT" in step.suggest.upper()]
+    assert refusals, "no step suggests a refusal"
+    assert any(step.edits_the_page for step in refusals)
+
+
+@pytest.mark.parametrize("spec,expected", [
+    ("", [1, 2, 3]),
+    ("2", [2]),
+    ("2,3", [2, 3]),
+    (" 3 , 1 ", [3, 1]),
+])
+def test_step_selection(spec, expected) -> None:
+    """--steps picks the steps named, in the order named, and all by default."""
+    assert drill_routing.select_steps(spec) == expected
+
+
+@pytest.mark.parametrize("spec", ["0", "4", "x", "2,9", "-1"])
+def test_step_selection_rejects_nonsense(spec) -> None:
+    """A mistyped step must fail immediately, not silently run the wrong one."""
+    with pytest.raises(ValueError):
+        drill_routing.select_steps(spec)

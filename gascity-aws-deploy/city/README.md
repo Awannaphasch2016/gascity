@@ -125,11 +125,16 @@ did next, and whether `index.html` actually changed:
 ```bash
 set -a; . /opt/gascity/bridge.env; set +a
 python3 bot/drill_routing.py            # all three steps
-python3 bot/drill_routing.py --step 2   # just one, after fixing something
+python3 bot/drill_routing.py --steps 2,3  # resume, or rerun one step
 ```
 
 It stops at each decision, because only a Telegram client can press a button.
-The approved edit is a real edit to the live page and is not rolled back.
+Press whichever you like: the reviewer's answer is the drill's input, not its
+script, so it checks that the agent obeyed *that* answer — an approval must
+reach the page, and a refusal must leave it untouched. The button it suggests
+only steers one full run through both paths instead of the same one twice.
+
+Any edit it approves is a real edit to the live page and is not rolled back.
 
 `GET /state` on the bridge is what it reads, and is worth curling directly when
 an approval seems stuck: it names every reviewer a request was routed to,

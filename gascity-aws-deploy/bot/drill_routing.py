@@ -60,7 +60,13 @@ class DrillFailure(Exception):
 
 @dataclass
 class Step:
-    """One request, the routing it must produce, and the answer it must get."""
+    """One request, the routing it must produce, and what must follow the answer.
+
+    `suggest` is a suggestion and nothing more. The reviewer's decision is this
+    drill's input, not its script: whichever button they press, what has to hold
+    is that the agent obeys *that* answer. Suggesting one exists only so a
+    single run covers a refusal and an approval rather than one of them twice.
+    """
 
     title: str
     sender: str
@@ -68,18 +74,16 @@ class Step:
     responsibility: str
     asked: set[str]
     required: int
-    instruction: str
-    approve: bool
-    expect_turn: str | None
-    # None where the drill has no business asserting: a sign-off need not
-    # rewrite the page to have been routed correctly.
-    page_changes: bool | None
-    approved_by: set[str] = field(default_factory=set)
+    suggest: str
+    # Whether an approval here should rewrite index.html. A sign-off need not, so
+    # the drill does not assert an edit it has no reason to expect. A *refusal*
+    # must leave the page alone either way, and that is always checked.
+    edits_the_page: bool
 
 
 STEPS: list[Step] = [
     Step(
-        title="one reviewer, rejected",
+        title="one reviewer",
         sender="you",
         request=(
             "Change the hero headline to "
@@ -88,13 +92,11 @@ STEPS: list[Step] = [
         responsibility="architecture_review",
         asked={"you"},
         required=1,
-        instruction="press REJECT in your own bot's chat",
-        approve=False,
-        expect_turn="EDIT_SKIPPED",
-        page_changes=False,
+        suggest="press REJECT in your own bot's chat",
+        edits_the_page=True,
     ),
     Step(
-        title="a different reviewer, approved",
+        title="a different reviewer",
         sender="nordice",
         request=(
             "Add a newsletter signup form under the pricing section: "
@@ -103,10 +105,8 @@ STEPS: list[Step] = [
         responsibility="security_review",
         asked={"nordice"},
         required=1,
-        instruction="press APPROVE in nordice's bot chat",
-        approve=True,
-        expect_turn="EDIT_DONE",
-        page_changes=True,
+        suggest="press APPROVE in nordice's bot chat",
+        edits_the_page=True,
     ),
     Step(
         title="two reviewers, quorum",
@@ -118,11 +118,8 @@ STEPS: list[Step] = [
         responsibility="deployment_approval",
         asked={"you", "nordice"},
         required=2,
-        instruction="press APPROVE in BOTH bot chats — one is not enough",
-        approve=True,
-        expect_turn=None,
-        page_changes=None,
-        approved_by={"you", "nordice"},
+        suggest="press APPROVE in BOTH bot chats — one is not enough",
+        edits_the_page=False,
     ),
 ]
 
@@ -184,6 +181,19 @@ def wait_for(probe: Callable[[], Any], timeout: float, what: str) -> Any:
         time.sleep(POLL_INTERVAL)
 
 
+def select_steps(spec: str) -> list[int]:
+    """Parse a --steps value into 1-based step numbers, in the order given."""
+    if not spec.strip():
+        return list(range(1, len(STEPS) + 1))
+    numbers = []
+    for field_text in spec.split(","):
+        text = field_text.strip()
+        if not text.isdigit() or not 1 <= int(text) <= len(STEPS):
+            raise ValueError(f"{text!r} is not a step between 1 and {len(STEPS)}")
+        numbers.append(int(text))
+    return numbers
+
+
 def page_digest(path: str) -> str:
     """Return a digest of the page, so an edit is detectable without diffing."""
     with open(path, "rb") as fh:
@@ -233,7 +243,9 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
     report.check("approvals needed", entry["required"], step.required)
     report.note(f'the agent described it as: "{entry["title"]}"')
 
-    print(f"\n  >>> On your phone: {step.instruction}\n")
+    print(f"\n  >>> On your phone: {step.suggest}\n"
+          f"      (either answer is fine — the drill checks the agent obeys "
+          f"the one you give)\n")
 
     approval_id = entry["id"]
     # Counted here rather than at the top of the step: the turn that asked for
@@ -250,13 +262,18 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
     report.note(f"waiting up to {HUMAN_TIMEOUT:.0f}s for your decision...")
     decided = wait_for(resolved, HUMAN_TIMEOUT, "your decision")
 
-    if step.approve:
-        expected = sorted(step.approved_by or step.asked)
-        report.check("approved by", sorted(decided["approved_by"]), expected)
-        report.check("rejected by", decided["rejected_by"], None)
+    approved = decided["rejected_by"] is None
+    if approved:
+        report.note("you approved it; checking the agent carries it out")
+        # Every vote must come from someone who holds the responsibility, and
+        # there must be as many as the responsibility demands. A quorum met by
+        # one reviewer voting twice, or by someone never asked, is not a quorum.
+        report.check("approved by", sorted(set(decided["approved_by"]) - step.asked), [])
+        report.check("approvals recorded", len(set(decided["approved_by"])), step.required)
     else:
-        report.check("rejected by", decided["rejected_by"], sorted(step.asked)[0])
-        report.check("approved by", sorted(decided["approved_by"]), [])
+        report.note(f"{decided['rejected_by']} rejected it; "
+                    "checking the agent leaves the page alone")
+        report.check("rejected by a reviewer", decided["rejected_by"] in step.asked, True)
 
     report.note(f"waiting up to {AGENT_TIMEOUT:.0f}s for the agent to act...")
     turns = wait_for(
@@ -264,16 +281,20 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
         AGENT_TIMEOUT, "the agent to reply to the decision",
     )
     latest = turns[-1]["text"]
-    if step.expect_turn is None:
+    if not step.edits_the_page:
         report.check("agent replied", bool(latest.strip()), True)
     else:
-        report.check("agent replied", latest.split(":")[0], step.expect_turn)
+        report.check("agent replied", latest.split(":")[0],
+                     "EDIT_DONE" if approved else "EDIT_SKIPPED")
     report.note(f"its reply: {latest[:160]}")
 
-    if step.page_changes is None:
-        return
     changed = page_digest(page) != before_digest
-    report.check("page changed", changed, step.page_changes)
+    if not approved:
+        # Unconditional: an edit made after a refusal is the single failure this
+        # whole system exists to prevent, whatever the step was about.
+        report.check("page changed", changed, False)
+    elif step.edits_the_page:
+        report.check("page changed", changed, True)
 
 
 def main() -> int:
@@ -285,12 +306,19 @@ def main() -> int:
                         help="base URL of the bridge's callback listener")
     parser.add_argument("--page", default="/opt/gascity/site/index.html",
                         help="the page the agent edits")
-    parser.add_argument("--step", type=int, default=0,
-                        help="run only this step (1-based); default runs all")
+    parser.add_argument("--steps", default="",
+                        help="1-based steps to run, comma separated "
+                             "(e.g. 2,3 to resume); default runs all")
     parser.add_argument("--human-timeout", type=float, default=HUMAN_TIMEOUT,
                         help="seconds to wait for each decision")
     args = parser.parse_args()
     HUMAN_TIMEOUT = args.human_timeout
+
+    try:
+        chosen = select_steps(args.steps)
+    except ValueError as exc:
+        print(f"--steps: {exc}", file=sys.stderr)
+        return 2
 
     # The bridge gets GC_API from its systemd unit rather than its env file, so
     # a shell that sourced only the env file is still missing it.
@@ -313,13 +341,12 @@ def main() -> int:
 
     gc = mod.GasCityClient(cfg)
     report = Report()
-    steps = STEPS if args.step == 0 else [STEPS[args.step - 1]]
 
     print(f"Routing drill against {cfg.gc_api} (city {cfg.city}), page {args.page}")
-    for offset, step in enumerate(steps, start=1):
-        number = args.step or offset
+    for number in chosen:
         try:
-            run_step(step, number, len(STEPS), gc, ledger, cfg, args.page, report)
+            run_step(STEPS[number - 1], number, len(STEPS), gc, ledger, cfg,
+                     args.page, report)
         except DrillFailure as exc:
             report.failures.append(str(exc))
             print(f"  FAIL  {exc}")

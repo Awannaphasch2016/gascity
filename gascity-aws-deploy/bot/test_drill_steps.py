@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Check the drill's own control flow, without Telegram or an agent.
 
-A live run costs a person three button presses and the wait between them, so
-the drill's sequencing has to be right before anyone is asked to sit through it.
-The behaviour that matters most is adoption: a rerun must answer the request
-already waiting on somebody's phone rather than sending another one, because two
+A live run costs a person several button presses and the wait between them, so
+the drill's sequencing has to be right before anyone sits through it.
+
+Two behaviours matter most. Adoption: a rerun must answer the request already
+waiting on somebody's phone rather than sending another one, because two
 identical approval messages with only one that counts is worse than no drill.
+And deference: the reviewer's decision is the drill's input, not its script, so
+pressing Approve where the drill suggested Reject must check that the agent
+edited the page — not report a failure.
 
 Run: python3 -m pytest bot/test_drill_steps.py
 """
@@ -113,108 +117,9 @@ def page(tmp_path):
     return str(path)
 
 
-def test_an_open_approval_is_adopted_rather_than_asked_again(page) -> None:
-    """A rerun answers the request already on the reviewer's phone."""
-    step = drill.STEPS[0]
-    open_entry = approval(step.responsibility, ["you"], 1)
-    rejected = dict(open_entry, resolved=True, rejected_by="you")
-    ledger = FakeLedger(
-        approvals=[[open_entry], [rejected]],
-        turns=[[], [turn("EDIT_SKIPPED: left the headline alone")]],
-    )
-    gc = FakeGasCity()
-    report = drill.Report()
-
-    drill.run_step(step, 1, 3, gc, ledger, FakeConfig(), page, report)
-
-    assert gc.sent == [], "a second approval request was sent for the same decision"
-    assert report.failures == []
-
-
-def test_a_step_with_nothing_open_sends_its_request(page) -> None:
-    """With no matching approval outstanding, the drill asks for one."""
-    step = drill.STEPS[0]
-    entry = approval(step.responsibility, ["you"], 1)
-    rejected = dict(entry, resolved=True, rejected_by="you")
-    ledger = FakeLedger(
-        approvals=[[], [entry], [rejected]],
-        turns=[[], [turn("EDIT_SKIPPED: left it alone")]],
-    )
-    gc = FakeGasCity()
-    report = drill.Report()
-
-    drill.run_step(step, 1, 3, gc, ledger, FakeConfig(), page, report)
-
-    assert [name for name, _ in gc.sent] == ["you"]
-    assert report.failures == []
-
-
-def test_an_approval_routed_to_the_wrong_reviewer_fails(page) -> None:
-    """The drill's whole purpose: a misrouted request must not pass."""
-    step = drill.STEPS[1]  # security_review, nordice's alone
-    entry = approval(step.responsibility, ["you"], 1)
-    approved = dict(entry, resolved=True, approved_by=["you"])
-    ledger = FakeLedger(
-        approvals=[[entry], [approved]],
-        turns=[[], [turn("EDIT_DONE: added the form")]],
-    )
-    report = drill.Report()
-
-    drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
-
-    assert any("routed to" in failure for failure in report.failures)
-
-
-def test_an_approval_the_agent_ignores_fails(page, monkeypatch) -> None:
-    """An approval that changes nothing is the failure this system prevents."""
-    monkeypatch.setattr(drill, "AGENT_TIMEOUT", 0.2)
-    step = drill.STEPS[1]
-    entry = approval(step.responsibility, ["nordice"], 1)
-    approved = dict(entry, resolved=True, approved_by=["nordice"])
-    ledger = FakeLedger(approvals=[[entry], [approved]], turns=[[]])
-    report = drill.Report()
-
-    with pytest.raises(drill.DrillFailure):
-        drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
-
-
-def test_an_edit_that_never_reaches_the_page_fails(page) -> None:
-    """The agent may claim EDIT_DONE; the page is the evidence."""
-    step = drill.STEPS[1]
-    entry = approval(step.responsibility, ["nordice"], 1)
-    approved = dict(entry, resolved=True, approved_by=["nordice"])
-    ledger = FakeLedger(
-        approvals=[[entry], [approved]],
-        turns=[[], [turn("EDIT_DONE: added the signup form")]],
-    )
-    report = drill.Report()
-
-    drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
-
-    assert any("page changed" in failure for failure in report.failures)
-
-
-def test_a_quorum_needs_every_configured_approver(page) -> None:
-    """One vote on a two-vote responsibility is a failure, not a pass."""
-    step = drill.STEPS[2]
-    entry = approval(step.responsibility, ["you", "nordice"], 2)
-    half = dict(entry, resolved=True, approved_by=["you"])
-    ledger = FakeLedger(
-        approvals=[[entry], [half]],
-        turns=[[], [turn("Publishing now")]],
-    )
-    report = drill.Report()
-
-    drill.run_step(step, 3, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
-
-    assert any("approved by" in failure for failure in report.failures)
-
-
-def test_the_page_is_read_before_the_request_not_after(page) -> None:
-    """An edit made during the step must register as a change."""
-    step = drill.STEPS[1]
-    entry = approval(step.responsibility, ["nordice"], 1)
-    approved = dict(entry, resolved=True, approved_by=["nordice"])
+@pytest.fixture
+def edits(page):
+    """Return a ledger class that writes the page when the agent reports it."""
 
     class EditingLedger(FakeLedger):
         """Writes the page at the moment the agent reports the edit."""
@@ -226,7 +131,187 @@ def test_the_page_is_read_before_the_request_not_after(page) -> None:
                     fh.write("<h1>before</h1><form></form>")
             return turns
 
-    ledger = EditingLedger(
+    return EditingLedger
+
+
+def page_step() -> drill.Step:
+    """A step whose approval is expected to change the page."""
+    return next(step for step in drill.STEPS if step.edits_the_page)
+
+
+def test_an_open_approval_is_adopted_rather_than_asked_again(page, edits) -> None:
+    """A rerun answers the request already on the reviewer's phone."""
+    step = page_step()
+    open_entry = approval(step.responsibility, sorted(step.asked), step.required)
+    approved = dict(open_entry, resolved=True,
+                    approved_by=sorted(step.asked)[:step.required])
+    ledger = edits(
+        approvals=[[open_entry], [approved]],
+        turns=[[], [turn("EDIT_DONE: added the form")]],
+    )
+    gc = FakeGasCity()
+    report = drill.Report()
+
+    drill.run_step(step, 1, 3, gc, ledger, FakeConfig(), page, report)
+
+    assert gc.sent == [], "a second approval request was sent for the same decision"
+    assert report.failures == []
+
+
+def test_a_step_with_nothing_open_sends_its_request(page, edits) -> None:
+    """With no matching approval outstanding, the drill asks for one."""
+    step = page_step()
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    approved = dict(entry, resolved=True, approved_by=sorted(step.asked)[:step.required])
+    ledger = edits(
+        approvals=[[], [entry], [approved]],
+        turns=[[], [turn("EDIT_DONE: added the form")]],
+    )
+    gc = FakeGasCity()
+    report = drill.Report()
+
+    drill.run_step(step, 1, 3, gc, ledger, FakeConfig(), page, report)
+
+    assert [name for name, _ in gc.sent] == [step.sender]
+    assert report.failures == []
+
+
+def test_a_rejection_passes_when_the_agent_leaves_the_page_alone(page) -> None:
+    """The refusal branch: no edit, and the agent says so."""
+    step = page_step()
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    rejected = dict(entry, resolved=True, rejected_by=sorted(step.asked)[0])
+    ledger = FakeLedger(
+        approvals=[[entry], [rejected]],
+        turns=[[], [turn("EDIT_SKIPPED: left the page alone")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 1, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert report.failures == []
+
+
+def test_a_reviewer_may_answer_either_way_without_failing_the_drill(page, edits) -> None:
+    """Approving where the drill suggested Reject is a decision, not a fault.
+
+    The drill suggests a button only so that one full run covers both answers.
+    Treating the suggestion as a requirement reported four failures for a
+    correctly routed approval the agent then carried out correctly.
+    """
+    step = next(s for s in drill.STEPS if s.edits_the_page and "REJECT" in s.suggest.upper())
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    approved = dict(entry, resolved=True, approved_by=sorted(step.asked)[:step.required])
+    ledger = edits(
+        approvals=[[entry], [approved]],
+        turns=[[], [turn("EDIT_DONE: rewrote the headline")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 1, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert report.failures == []
+
+
+def test_an_edit_after_a_rejection_fails(page, edits) -> None:
+    """The one failure the whole system exists to prevent."""
+    step = page_step()
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    rejected = dict(entry, resolved=True, rejected_by=sorted(step.asked)[0])
+    ledger = edits(
+        approvals=[[entry], [rejected]],
+        turns=[[], [turn("EDIT_DONE: did it anyway")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 1, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert any("page changed" in failure for failure in report.failures)
+
+
+def test_an_approval_routed_to_the_wrong_reviewer_fails(page, edits) -> None:
+    """The drill's whole purpose: a misrouted request must not pass."""
+    step = next(s for s in drill.STEPS if s.asked == {"nordice"})
+    entry = approval(step.responsibility, ["you"], 1)
+    approved = dict(entry, resolved=True, approved_by=["you"])
+    ledger = edits(
+        approvals=[[entry], [approved]],
+        turns=[[], [turn("EDIT_DONE: added the form")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert any("routed to" in failure for failure in report.failures)
+
+
+def test_an_approval_the_agent_ignores_fails(page, monkeypatch) -> None:
+    """An approval that produces nothing is a silent failure, so it is loud."""
+    monkeypatch.setattr(drill, "AGENT_TIMEOUT", 0.2)
+    step = page_step()
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    approved = dict(entry, resolved=True, approved_by=sorted(step.asked)[:step.required])
+    ledger = FakeLedger(approvals=[[entry], [approved]], turns=[[]])
+    report = drill.Report()
+
+    with pytest.raises(drill.DrillFailure):
+        drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+
+def test_an_edit_that_never_reaches_the_page_fails(page) -> None:
+    """The agent may claim EDIT_DONE; the page is the evidence."""
+    step = page_step()
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    approved = dict(entry, resolved=True, approved_by=sorted(step.asked)[:step.required])
+    ledger = FakeLedger(
+        approvals=[[entry], [approved]],
+        turns=[[], [turn("EDIT_DONE: added the signup form")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert any("page changed" in failure for failure in report.failures)
+
+
+def test_a_quorum_satisfied_by_one_vote_fails(page) -> None:
+    """One vote on a two-vote responsibility is a failure, not a pass."""
+    step = next(s for s in drill.STEPS if s.required > 1)
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    half = dict(entry, resolved=True, approved_by=["you"])
+    ledger = FakeLedger(
+        approvals=[[entry], [half]],
+        turns=[[], [turn("Publishing now")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 3, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert any("approvals recorded" in failure for failure in report.failures)
+
+
+def test_a_vote_from_someone_not_asked_fails(page) -> None:
+    """A reviewer who does not hold the responsibility must not satisfy it."""
+    step = next(s for s in drill.STEPS if s.asked == {"nordice"})
+    entry = approval(step.responsibility, ["nordice"], 1)
+    approved = dict(entry, resolved=True, approved_by=["you"])
+    ledger = FakeLedger(
+        approvals=[[entry], [approved]],
+        turns=[[], [turn("EDIT_DONE: added the form")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert any("approved by" in failure for failure in report.failures)
+
+
+def test_the_page_is_read_before_the_request_not_after(page, edits) -> None:
+    """An edit made during the step must register as a change."""
+    step = page_step()
+    entry = approval(step.responsibility, sorted(step.asked), step.required)
+    approved = dict(entry, resolved=True, approved_by=sorted(step.asked)[:step.required])
+    ledger = edits(
         approvals=[[entry], [approved]],
         turns=[[], [turn("EDIT_DONE: added the form")]],
     )
