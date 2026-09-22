@@ -142,14 +142,25 @@ sudo systemctl reload nginx
 echo "page served on 8080 from ${REMOTE}/site"
 REMOTE_SCRIPT
 
+# Two files, because the controller passes its own environment down to every
+# agent it spawns. A single shared file put both Telegram bot tokens in the
+# builder's process environment, which hands the agent the means to post an
+# approval to itself — collapsing the one guarantee this system makes. Only the
+# bridge needs those tokens, and only the controller needs the model credential.
 echo "==> writing environment"
-"${SSH[@]}" "cat > ${REMOTE}/factory.env" <<ENV_FILE
+"${SSH[@]}" "cat > ${REMOTE}/controller.env" <<ENV_FILE
+# Inherited by every agent session. Nothing here may be a credential an agent
+# could use to impersonate a reviewer.
 CURSOR_API_KEY=${CURSOR_API_KEY}
-TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-TELEGRAM_BOT_TOKEN_NORDICE=${TELEGRAM_BOT_TOKEN_NORDICE}
 # The host has no bd binary, so use the file-backed bead store rather than
 # bootstrapping Dolt on a 2-vCPU box.
 GC_BEADS=file
+ENV_FILE
+"${SSH[@]}" "cat > ${REMOTE}/bridge.env" <<ENV_FILE
+# Read only by factory-bridge.service. The bot tokens are the approval channel,
+# so they stay out of the controller's environment.
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+TELEGRAM_BOT_TOKEN_NORDICE=${TELEGRAM_BOT_TOKEN_NORDICE}
 GC_CITY_NAME=factory
 GC_ACCOUNT_ID=factory
 GC_CONVERSATION_ID=landing-page
@@ -158,7 +169,7 @@ BRIDGE_CALLBACK_URL=http://127.0.0.1:8081
 BRIDGE_PORT=8081
 PAGE_URL=http://${HOST}:8080/
 ENV_FILE
-"${SSH[@]}" "chmod 600 ${REMOTE}/factory.env"
+"${SSH[@]}" "chmod 600 ${REMOTE}/controller.env ${REMOTE}/bridge.env"
 
 # gc installs itself as a systemd --user service, which inherits nothing from
 # this SSH session. Without this drop-in, CURSOR_API_KEY never reaches the
@@ -171,7 +182,7 @@ dropin="\$HOME/.config/systemd/user/gascity-supervisor.service.d"
 mkdir -p "\$dropin"
 cat > "\$dropin/factory.conf" <<UNIT
 [Service]
-EnvironmentFile=${REMOTE}/factory.env
+EnvironmentFile=${REMOTE}/controller.env
 UNIT
 systemctl --user daemon-reload 2>/dev/null || true
 echo "drop-in installed"
@@ -181,7 +192,7 @@ echo "==> starting the city"
 "${SSH[@]}" bash -s <<REMOTE_SCRIPT
 set -euo pipefail
 export PATH="\$HOME/.local/bin:\$PATH"
-set -a; . ${REMOTE}/factory.env; set +a
+set -a; . ${REMOTE}/controller.env; set +a
 cd ${REMOTE}/city
 
 # --preserve-existing keeps the committed city.toml and prompt template.
@@ -230,7 +241,7 @@ Wants=gascity-supervisor.service
 [Service]
 Type=simple
 WorkingDirectory=${REMOTE}/bot
-EnvironmentFile=${REMOTE}/factory.env
+EnvironmentFile=${REMOTE}/bridge.env
 Environment=GC_API=http://127.0.0.1:${API_PORT}
 ExecStart=/usr/bin/python3 -u ${REMOTE}/bot/bridge.py
 Restart=always

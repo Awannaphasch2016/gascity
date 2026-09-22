@@ -12,7 +12,7 @@ Wants=gascity-supervisor.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/gascity/bot
-EnvironmentFile=/opt/gascity/factory.env
+EnvironmentFile=/opt/gascity/bridge.env
 Environment=GC_API=http://127.0.0.1:8372
 # -u because this log is the only record of what Telegram accepted or rejected,
 # and a buffered log loses exactly the lines written before a crash.
