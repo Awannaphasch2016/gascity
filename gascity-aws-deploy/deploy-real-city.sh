@@ -102,26 +102,44 @@ scp "${SSH_OPTS[@]}" ./test_extmsg_protocol.py "ubuntu@${HOST}:${REMOTE}/"
 # agent's approved edits live in this file and are the point of the exercise.
 # Delete it on the host to reset to the baseline deliberately.
 echo "==> seeding the landing page if absent"
-scp "${SSH_OPTS[@]}" ./miniapp/index.html "ubuntu@${HOST}:/tmp/index.html.baseline"
+scp "${SSH_OPTS[@]}" ./site/index.html "ubuntu@${HOST}:/tmp/index.html.baseline"
 "${SSH[@]}" bash -s <<REMOTE_SCRIPT
 set -euo pipefail
-sudo mkdir -p ${REMOTE}/miniapp
-if [ -s ${REMOTE}/miniapp/index.html ] && grep -q 'Northwind' ${REMOTE}/miniapp/index.html; then
+sudo mkdir -p ${REMOTE}/site
+if [ -s ${REMOTE}/site/index.html ] && grep -q 'Northwind' ${REMOTE}/site/index.html; then
   echo "page already seeded; leaving the agent's edits in place"
 else
-  sudo cp -f /tmp/index.html.baseline ${REMOTE}/miniapp/index.html
+  sudo cp -f /tmp/index.html.baseline ${REMOTE}/site/index.html
   echo "page seeded from baseline"
 fi
-sudo chown -R ubuntu:ubuntu ${REMOTE}/miniapp
+sudo chown -R ubuntu:ubuntu ${REMOTE}/site
 # git makes the agent's edits diffable, which is how you audit what it changed.
-if [ ! -d ${REMOTE}/miniapp/.git ]; then
-  cd ${REMOTE}/miniapp
+if [ ! -d ${REMOTE}/site/.git ]; then
+  cd ${REMOTE}/site
   git init -q
   git config user.email factory@localhost
   git config user.name "Gas City factory"
   git add -A && git commit -qm "baseline landing page"
   echo "git initialized for the page"
 fi
+REMOTE_SCRIPT
+
+# Previously configured by hand on the host, which left the page's only public
+# surface out of the repo and carried a dead alias to a docker-era status
+# directory that does not exist here.
+echo "==> serving the page"
+scp "${SSH_OPTS[@]}" ./nginx/factory-page.conf "ubuntu@${HOST}:/tmp/factory-page.conf"
+"${SSH[@]}" bash -s <<REMOTE_SCRIPT
+set -euo pipefail
+sudo apt-get install -y -qq nginx >/dev/null
+sudo mv -f /tmp/factory-page.conf /etc/nginx/sites-available/factory-page
+sudo ln -sfn /etc/nginx/sites-available/factory-page /etc/nginx/sites-enabled/factory-page
+# The earlier hand-written site claims port 8080 too; two servers on one port
+# makes which root wins depend on config load order.
+sudo rm -f /etc/nginx/sites-enabled/miniapp
+sudo nginx -t
+sudo systemctl reload nginx
+echo "page served on 8080 from ${REMOTE}/site"
 REMOTE_SCRIPT
 
 echo "==> writing environment"

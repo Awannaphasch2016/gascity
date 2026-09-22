@@ -48,7 +48,7 @@ name = "builder"
 description = "Maintains the landing page and requests human approval before editing it."
 provider = "cursor"
 # The page the agent edits. Its edits are visible at the dashboard URL.
-work_dir = "/opt/gascity/miniapp"
+work_dir = "/opt/gascity/site"
 prompt_template = "agents/builder/prompt.template.md"
 
 # A default route requires its target agent to resolve to a configured named

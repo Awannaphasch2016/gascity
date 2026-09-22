@@ -13,7 +13,7 @@ import requests
 from flask import Flask, jsonify, request
 
 GC, CITY, PORT = "http://127.0.0.1:8372", "citytest", 8099
-PAGE = "/tmp/miniapp-local/index.html"
+PAGE = "/tmp/site-local/index.html"
 CONV = {
     "provider": "telegram", "account_id": "factory",
     "conversation_id": "landing-page", "scope_id": "city", "kind": "dm",
@@ -113,5 +113,5 @@ if after == before:
 print("PASS: page changed only after approval")
 print(f"\nEDIT_DONE reported: {done}")
 print("\n=== diff ===")
-subprocess.run(["git", "-C", "/tmp/miniapp-local", "diff", "--stat"], check=False)
-subprocess.run(["git", "-C", "/tmp/miniapp-local", "diff"], check=False)
+subprocess.run(["git", "-C", "/tmp/site-local", "diff", "--stat"], check=False)
+subprocess.run(["git", "-C", "/tmp/site-local", "diff"], check=False)

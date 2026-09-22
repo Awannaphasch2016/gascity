@@ -16,7 +16,29 @@ holds all of that reasoning. The Go code and this config carry transport only.
 | `agents/builder/prompt.template.md` | The approval protocol and the rules for choosing a responsibility |
 | `../bot/bridge.py` | Carries turns between Telegram and the city; resolves a responsibility to people |
 | `../config/responsibilities.json` | Who holds which responsibility, and how many must agree |
+| `../site/index.html` | The page the agent edits; served as-is from the agent's work_dir |
+| `../nginx/factory-page.conf` | Serves that page on port 8080 |
 | `../test_extmsg_protocol.py` | Checks the transport without Telegram or an agent |
+
+## The page is a plain page, not a Telegram Mini App
+
+An earlier plan called for a Mini App, and the leftover name misled readers into
+looking for one. There is none: the page is static HTML served over plain HTTP,
+linked from Telegram as an ordinary URL, and opened in whatever browser the
+phone hands it to.
+
+That is the better fit for what the page is for. A Mini App has to be served
+over HTTPS and is only reachable from inside Telegram, whereas a public URL is
+stronger evidence that the agent changed something real. The cost is that the
+page is anonymous and world-readable, so nothing user-specific can go on it.
+
+A Mini App would earn its place at the approval step rather than here. Telegram
+signs an `initData` payload identifying the viewer, so a Mini App could show the
+diff, or a rendered before/after, and know which approvals belong to whoever is
+looking — replacing a two-button keyboard and a one-line description with
+something you can actually review before deciding. That needs TLS, `initData`
+verification in the bridge, and an endpoint exposing pending approvals per
+verified user. None of it is built.
 
 ## What has to be true before it works
 
