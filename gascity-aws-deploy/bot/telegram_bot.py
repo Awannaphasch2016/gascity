@@ -238,6 +238,97 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     send_to_gascity(conversation_id, f"{username}: {text}")
     await update.message.reply_text("✅ Sent to agent")
 
+async def send_approval_request(app: Application, telegram_id: int, message_data: dict):
+    """Send approval request to Telegram user"""
+    try:
+        msg = message_data['message']
+        if msg.startswith('APPROVAL_NEEDED:'):
+            parts = msg.replace('APPROVAL_NEEDED:', '').split('|')
+            if len(parts) >= 3:
+                responsibility = parts[0].strip()
+                title = parts[1].strip()
+                details = parts[2].strip()
+                
+                meta = router.get_responsibility_metadata(responsibility)
+                requires_multiple, required_count = router.requires_multiple_approvals(responsibility)
+                
+                approval_id = f"{responsibility}_{datetime.now().timestamp()}"
+                active_approvals[approval_id] = {
+                    "responsibility": responsibility,
+                    "title": title,
+                    "details": details,
+                    "approvers": [get_username_from_telegram_id(telegram_id)],
+                    "responses": {},
+                    "requires_multiple": requires_multiple,
+                    "required_count": required_count,
+                    "conversation_id": f"telegram-approval-{approval_id}"
+                }
+                
+                keyboard = [[
+                    InlineKeyboardButton("✅ Approve", callback_data=json.dumps({"action": "approve", "approval_id": approval_id})),
+                    InlineKeyboardButton("❌ Deny", callback_data=json.dumps({"action": "reject", "approval_id": approval_id}))
+                ]]
+                
+                text = f"{meta.get('icon', '📋')} **{title}**\n\n{details}\n\n_Type: {meta.get('name', responsibility)}_"
+                
+                await app.bot.send_message(
+                    chat_id=telegram_id,
+                    text=text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+                logger.info(f"✅ Sent approval request to {telegram_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to send approval: {e}")
+
+def poll_for_messages(app: Application):
+    """Poll Flask API for queued messages"""
+    import asyncio
+    import time
+    
+    logger.info("🔄 Starting message polling thread...")
+    
+    while True:
+        try:
+            if not GC_CLIENT_ID or not GC_TOKEN:
+                time.sleep(5)
+                continue
+                
+            response = requests.post(
+                f"{GC_API}/v0/extmsg/outbound",
+                json={"client_id": GC_CLIENT_ID, "token": GC_TOKEN},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                messages = data.get("messages", [])
+                
+                if messages:
+                    logger.info(f"📨 Received {len(messages)} messages from Flask API")
+                    
+                    for msg_data in messages:
+                        # Find which Telegram users should receive this
+                        msg_text = msg_data.get('message', '')
+                        
+                        if msg_text.startswith('APPROVAL_NEEDED:'):
+                            parts = msg_text.replace('APPROVAL_NEEDED:', '').split('|')
+                            if len(parts) >= 1:
+                                responsibility = parts[0].strip()
+                                approvers = router.get_approvers_for_responsibility(responsibility)
+                                
+                                for approver in approvers:
+                                    telegram_id = approver['telegram_id']
+                                    # Schedule the send in the asyncio loop
+                                    asyncio.run_coroutine_threadsafe(
+                                        send_approval_request(app, telegram_id, msg_data),
+                                        app.application.loop
+                                    )
+        except Exception as e:
+            logger.error(f"❌ Polling error: {e}")
+        
+        time.sleep(3)  # Poll every 3 seconds
+
 def main():
     if not TELEGRAM_BOT_TOKEN:
         logger.error("❌ TELEGRAM_BOT_TOKEN not set")
@@ -251,6 +342,11 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Start message polling thread
+    polling_thread = threading.Thread(target=poll_for_messages, args=(app,), daemon=True)
+    polling_thread.start()
+    logger.info("🔄 Message polling thread started")
     
     logger.info("🚀 Bot started!")
     app.run_polling()
