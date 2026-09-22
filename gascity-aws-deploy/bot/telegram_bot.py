@@ -238,8 +238,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     send_to_gascity(conversation_id, f"{username}: {text}")
     await update.message.reply_text("✅ Sent to agent")
 
-async def send_approval_request(app: Application, telegram_id: int, message_data: dict):
-    """Send approval request to Telegram user"""
+def send_approval_request_sync(telegram_id: int, message_data: dict):
+    """Send approval request to Telegram user (synchronous)"""
     try:
         msg = message_data['message']
         if msg.startswith('APPROVAL_NEEDED:'):
@@ -264,26 +264,33 @@ async def send_approval_request(app: Application, telegram_id: int, message_data
                     "conversation_id": f"telegram-approval-{approval_id}"
                 }
                 
-                keyboard = [[
-                    InlineKeyboardButton("✅ Approve", callback_data=json.dumps({"action": "approve", "approval_id": approval_id})),
-                    InlineKeyboardButton("❌ Deny", callback_data=json.dumps({"action": "reject", "approval_id": approval_id}))
-                ]]
+                keyboard = {
+                    "inline_keyboard": [[
+                        {"text": "✅ Approve", "callback_data": json.dumps({"action": "approve", "approval_id": approval_id})},
+                        {"text": "❌ Deny", "callback_data": json.dumps({"action": "reject", "approval_id": approval_id})}
+                    ]]
+                }
                 
-                text = f"{meta.get('icon', '📋')} **{title}**\n\n{details}\n\n_Type: {meta.get('name', responsibility)}_"
+                text = f"{meta.get('icon', '📋')} *{title}*\n\n{details}\n\n_Type: {meta.get('name', responsibility)}_"
                 
-                await app.bot.send_message(
-                    chat_id=telegram_id,
-                    text=text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
+                # Send directly via Telegram HTTP API
+                response = requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json={
+                        "chat_id": telegram_id,
+                        "text": text,
+                        "reply_markup": keyboard,
+                        "parse_mode": "Markdown"
+                    },
+                    timeout=10
                 )
+                response.raise_for_status()
                 logger.info(f"✅ Sent approval request to {telegram_id}")
     except Exception as e:
         logger.error(f"❌ Failed to send approval: {e}")
 
 def poll_for_messages(app: Application):
     """Poll Flask API for queued messages"""
-    import asyncio
     import time
     
     logger.info("🔄 Starting message polling thread...")
@@ -308,7 +315,6 @@ def poll_for_messages(app: Application):
                     logger.info(f"📨 Received {len(messages)} messages from Flask API")
                     
                     for msg_data in messages:
-                        # Find which Telegram users should receive this
                         msg_text = msg_data.get('message', '')
                         
                         if msg_text.startswith('APPROVAL_NEEDED:'):
@@ -319,15 +325,7 @@ def poll_for_messages(app: Application):
                                 
                                 for approver in approvers:
                                     telegram_id = approver['telegram_id']
-                                    # Create new event loop for this thread
-                                    loop = asyncio.new_event_loop()
-                                    asyncio.set_event_loop(loop)
-                                    try:
-                                        loop.run_until_complete(
-                                            send_approval_request(app, telegram_id, msg_data)
-                                        )
-                                    finally:
-                                        loop.close()
+                                    send_approval_request_sync(telegram_id, msg_data)
         except Exception as e:
             logger.error(f"❌ Polling error: {e}")
         
