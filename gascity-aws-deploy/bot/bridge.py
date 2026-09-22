@@ -164,6 +164,17 @@ class GasCityClient:
         resp.raise_for_status()
         log.info("registered adapter: %s", resp.json())
 
+    def adapter_registered(self) -> bool:
+        """Report whether the controller still holds this bridge's adapter."""
+        resp = self.session.get(self._url("adapters"), timeout=15)
+        resp.raise_for_status()
+        items = resp.json().get("items") or []
+        return any(
+            item.get("provider") == PROVIDER
+            and item.get("account_id") == self.cfg.account_id
+            for item in items
+        )
+
     def send_inbound(self, text: str, actor_id: str, actor_name: str) -> dict[str, Any]:
         """Deliver a human turn to the agent and return the routing decision."""
         body = {
@@ -257,6 +268,40 @@ class Bridge:
         self.tg = Telegram(cfg.tokens)
         self.pending: dict[str, PendingApproval] = {}
         self.lock = threading.Lock()
+
+    # --- Registration upkeep ---------------------------------------------
+
+    def ensure_registered(self) -> bool:
+        """Re-register if the controller has forgotten this adapter.
+
+        Returns whether a registration was performed. Never raises: a controller
+        that is restarting refuses the check, and a reconcile loop that dies on
+        that leaves the bridge permanently deaf.
+        """
+        try:
+            if self.gc.adapter_registered():
+                return False
+            log.warning("adapter registration is gone; registering again")
+            self.gc.register_adapter()
+            return True
+        except Exception:
+            log.exception("checking adapter registration")
+            return False
+
+    def reconcile_registration(self, interval: float = 30.0) -> None:
+        """Keep this bridge registered for as long as it runs.
+
+        Registrations live in the controller's memory, so `gc stop`/`gc start`, a
+        supervisor restart, or a crash drops them. Nothing tells the bridge: Gas
+        City keeps accepting inbound turns and the agent keeps working, but its
+        replies come back 422 and the human waiting on an approval sees silence.
+        There is no event to subscribe to for "the controller restarted", so this
+        converges on the desired state by checking it, the same way the rest of
+        the system stays correct.
+        """
+        while True:
+            time.sleep(interval)
+            self.ensure_registered()
 
     # --- Gas City -> Telegram -------------------------------------------
 
@@ -532,6 +577,9 @@ def main() -> int:
     except Exception as exc:
         log.error("could not register adapter with Gas City at %s: %s", cfg.gc_api, exc)
         return 1
+
+    threading.Thread(target=bridge.reconcile_registration, daemon=True,
+                     name="reconcile-registration").start()
 
     for user in cfg.users:
         threading.Thread(target=bridge.poll, args=(user,), daemon=True,
