@@ -95,7 +95,8 @@ echo "==> uploading city config and bridge"
 "${SSH[@]}" "sudo mkdir -p ${REMOTE}/city ${REMOTE}/config ${REMOTE}/bot && sudo chown -R ubuntu:ubuntu ${REMOTE}"
 scp "${SSH_OPTS[@]}" -r ./city/. "ubuntu@${HOST}:${REMOTE}/city/"
 scp "${SSH_OPTS[@]}" ./config/responsibilities.json "ubuntu@${HOST}:${REMOTE}/config/"
-scp "${SSH_OPTS[@]}" ./bot/bridge.py ./bot/requirements.txt "ubuntu@${HOST}:${REMOTE}/bot/"
+scp "${SSH_OPTS[@]}" ./bot/bridge.py ./bot/drill_routing.py ./bot/requirements.txt \
+  "ubuntu@${HOST}:${REMOTE}/bot/"
 scp "${SSH_OPTS[@]}" ./test_extmsg_protocol.py "ubuntu@${HOST}:${REMOTE}/"
 
 # Seed the page the agent edits, but never overwrite it on a re-deploy: the
@@ -268,6 +269,13 @@ Deployed. Message either bot and ask for a change to the page, for example:
   "Publish the page"                                           -> deployment_approval (needs both)
 
 The page is at http://${HOST}:8080/
+
+To check every routing path in one pass, run the drill and answer on your phone
+when it stops:
+
+  ssh -i ${KEY} ubuntu@${HOST}
+  set -a; . ${REMOTE}/bridge.env; set +a
+  python3 ${REMOTE}/bot/drill_routing.py
 
 If a request routes but nothing comes back, check the agent's pane:
   ssh -i ${KEY} ubuntu@${HOST} 'tmux -L factory capture-pane -p -t builder'

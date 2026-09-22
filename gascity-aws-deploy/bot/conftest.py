@@ -98,3 +98,44 @@ def shared_account_bridge(build_bridge) -> Any:
     testing, each through their own bot.
     """
     return build_bridge(you_id=7037289190, nordice_id=7037289190)
+
+
+@pytest.fixture
+def capture(monkeypatch) -> Callable[[Any], dict[str, list]]:
+    """Silence Telegram and Gas City, recording what each was asked to do."""
+
+    def wire(bridge: Any) -> dict[str, list]:
+        record: dict[str, list] = {"sent": [], "callbacks": [], "edits": [], "inbound": []}
+        monkeypatch.setattr(bridge.tg, "send",
+                            lambda user, chat, text, buttons=None:
+                            record["sent"].append((user, text)) or 1)
+        monkeypatch.setattr(bridge.tg, "answer_callback",
+                            lambda user, cid, text:
+                            record["callbacks"].append((user, text)))
+        monkeypatch.setattr(bridge.tg, "edit",
+                            lambda user, chat, mid, text: record["edits"].append(text))
+        monkeypatch.setattr(bridge.gc, "send_inbound",
+                            lambda text, actor_id, actor_name:
+                            record["inbound"].append(text) or {"TargetAgentName": "builder"})
+        return record
+
+    return wire
+
+
+@pytest.fixture
+def press() -> Callable[..., None]:
+    """Return a helper simulating a button press arriving on one bot."""
+
+    def act(bridge: Any, bot: str, telegram_id: int, approval_id: str,
+            approve: bool = True) -> None:
+        prefix = "a:" if approve else "r:"
+        bridge._dispatch(bot, {
+            "update_id": 1,
+            "callback_query": {
+                "id": "cb1",
+                "from": {"id": telegram_id},
+                "data": f"{prefix}{approval_id}",
+            },
+        })
+
+    return act

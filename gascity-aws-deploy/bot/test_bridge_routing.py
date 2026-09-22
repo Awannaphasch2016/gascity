@@ -14,45 +14,8 @@ Run: python3 -m pytest bot/test_bridge_routing.py
 
 from __future__ import annotations
 
-import pytest
 
-
-@pytest.fixture
-def capture(monkeypatch):
-    """Silence Telegram and Gas City, recording what each was asked to do."""
-
-    def wire(bridge):
-        record = {"sent": [], "callbacks": [], "edits": [], "inbound": []}
-        monkeypatch.setattr(bridge.tg, "send",
-                            lambda user, chat, text, buttons=None:
-                            record["sent"].append((user, text)) or 1)
-        monkeypatch.setattr(bridge.tg, "answer_callback",
-                            lambda user, cid, text:
-                            record["callbacks"].append((user, text)))
-        monkeypatch.setattr(bridge.tg, "edit",
-                            lambda user, chat, mid, text: record["edits"].append(text))
-        monkeypatch.setattr(bridge.gc, "send_inbound",
-                            lambda text, actor_id, actor_name:
-                            record["inbound"].append(text) or {"TargetAgentName": "builder"})
-        return record
-
-    return wire
-
-
-def press(bridge, bot: str, telegram_id: int, approval_id: str, approve: bool = True) -> None:
-    """Simulate a button press arriving on one reviewer's bot."""
-    prefix = "a:" if approve else "r:"
-    bridge._dispatch(bot, {
-        "update_id": 1,
-        "callback_query": {
-            "id": "cb1",
-            "from": {"id": telegram_id},
-            "data": f"{prefix}{approval_id}",
-        },
-    })
-
-
-def test_press_on_nordices_bot_is_attributed_to_nordice(shared_account_bridge, capture):
+def test_press_on_nordices_bot_is_attributed_to_nordice(shared_account_bridge, capture, press):
     """A security_review press on nordice's bot counts as nordice approving.
 
     Both reviewers share a Telegram account here, so resolving the actor from
@@ -70,7 +33,7 @@ def test_press_on_nordices_bot_is_attributed_to_nordice(shared_account_bridge, c
     assert "APPROVED by nordice" in record["inbound"][0]
 
 
-def test_press_on_the_wrong_bot_is_refused(shared_account_bridge, capture):
+def test_press_on_the_wrong_bot_is_refused(shared_account_bridge, capture, press):
     """A reviewer cannot approve through a bot that is not theirs."""
     bridge = shared_account_bridge
     record = capture(bridge)
@@ -84,7 +47,7 @@ def test_press_on_the_wrong_bot_is_refused(shared_account_bridge, capture):
     assert any("responsibility" in text.lower() for _, text in record["callbacks"])
 
 
-def test_a_stranger_cannot_act_through_a_reviewers_bot(shared_account_bridge, capture):
+def test_a_stranger_cannot_act_through_a_reviewers_bot(shared_account_bridge, capture, press):
     """An update from an account the bot's reviewer does not own is refused."""
     bridge = shared_account_bridge
     record = capture(bridge)
@@ -96,7 +59,7 @@ def test_a_stranger_cannot_act_through_a_reviewers_bot(shared_account_bridge, ca
     assert not record["inbound"], "a stranger's press reached the agent"
 
 
-def test_two_approver_responsibility_needs_both_bots(shared_account_bridge, capture):
+def test_two_approver_responsibility_needs_both_bots(shared_account_bridge, capture, press):
     """deployment_approval resolves only after both reviewers press."""
     bridge = shared_account_bridge
     record = capture(bridge)
@@ -113,7 +76,7 @@ def test_two_approver_responsibility_needs_both_bots(shared_account_bridge, capt
     assert "APPROVED by nordice, you" in record["inbound"][0]
 
 
-def test_one_rejection_resolves_immediately(shared_account_bridge, capture):
+def test_one_rejection_resolves_immediately(shared_account_bridge, capture, press):
     """A single reject ends a two-approver request without the other vote."""
     bridge = shared_account_bridge
     record = capture(bridge)
@@ -141,7 +104,7 @@ def test_a_message_is_attributed_to_the_bot_it_arrived_on(shared_account_bridge,
     assert record["sent"][0][0] == "nordice"
 
 
-def test_distinct_accounts_still_route_correctly(bridge, capture):
+def test_distinct_accounts_still_route_correctly(bridge, capture, press):
     """The common case, where each reviewer has their own Telegram account."""
     record = capture(bridge)
 

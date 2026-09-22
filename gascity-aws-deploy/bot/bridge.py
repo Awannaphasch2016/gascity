@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -57,6 +58,13 @@ REJECT_PREFIX = "r:"
 # the edit lands on disk while the person who approved it hears nothing. HTML
 # needs only three characters escaped, which esc() below does exhaustively.
 PARSE_MODE = "HTML"
+
+# Bounds on the routing ledger served at /state. Resolved approvals stay
+# queryable so a late button press is answered "already decided" rather than
+# "no longer open", but a process that runs for weeks must not accumulate every
+# request it ever handled.
+APPROVAL_HISTORY = 100
+TURN_HISTORY = 100
 
 
 def esc(text: str) -> str:
@@ -119,17 +127,38 @@ class Config:
 class PendingApproval:
     """One outstanding approval request and the votes cast on it."""
 
-    def __init__(self, responsibility: str, title: str, detail: str, required: int) -> None:
+    def __init__(self, responsibility: str, title: str, detail: str, required: int,
+                 asked: list[str]) -> None:
         self.responsibility = responsibility
         self.title = title
         self.detail = detail
         self.required = required
+        self.asked = asked
         self.approvals: set[str] = set()
         self.rejected_by: str | None = None
         self.resolved = False
         # Message coordinates so every approver's copy can be updated once the
         # request resolves, rather than leaving stale buttons on their phones.
         self.messages: list[tuple[str, int]] = []
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return this approval's routing state as JSON-safe data.
+
+        `asked` is who holds the responsibility; `delivered` is who Telegram
+        actually accepted a message for. They differ when a reviewer is
+        unreachable, which is the difference between a decision nobody has made
+        yet and one nobody was ever asked to make.
+        """
+        return {
+            "responsibility": self.responsibility,
+            "title": self.title,
+            "required": self.required,
+            "asked": list(self.asked),
+            "delivered": [name for name, _ in self.messages],
+            "approved_by": sorted(self.approvals),
+            "rejected_by": self.rejected_by,
+            "resolved": self.resolved,
+        }
 
 
 class GasCityClient:
@@ -267,7 +296,43 @@ class Bridge:
         self.gc = GasCityClient(cfg)
         self.tg = Telegram(cfg.tokens)
         self.pending: dict[str, PendingApproval] = {}
+        self.turns: deque[dict[str, str]] = deque(maxlen=TURN_HISTORY)
         self.lock = threading.Lock()
+
+    # --- Routing ledger ---------------------------------------------------
+
+    def state(self) -> dict[str, Any]:
+        """Return every approval this bridge has routed and every agent turn.
+
+        Routing is otherwise visible only as a message on somebody's phone, so
+        whether a request reached the right reviewer cannot be checked from
+        outside the conversation. This makes it a question with an answer.
+        """
+        with self.lock:
+            return {
+                "approvals": [
+                    dict(id=approval_id, **pending.snapshot())
+                    for approval_id, pending in self.pending.items()
+                ],
+                "turns": list(self.turns),
+            }
+
+    def _remember(self, approval_id: str, pending: PendingApproval) -> None:
+        """Record an approval, retiring resolved ones once history fills.
+
+        Unresolved approvals are never retired. Someone is still looking at that
+        message, and forgetting it turns their press into "no longer open" —
+        discarding a decision at the moment it is made.
+        """
+        with self.lock:
+            self.pending[approval_id] = pending
+            if len(self.pending) <= APPROVAL_HISTORY:
+                return
+            for old_id, old in list(self.pending.items()):
+                if len(self.pending) <= APPROVAL_HISTORY:
+                    break
+                if old.resolved:
+                    del self.pending[old_id]
 
     # --- Registration upkeep ---------------------------------------------
 
@@ -308,6 +373,11 @@ class Bridge:
     def on_publish(self, text: str) -> None:
         """Handle one outbound turn from the agent."""
         stripped = text.strip()
+        with self.lock:
+            self.turns.append({
+                "at": datetime.now(timezone.utc).isoformat(),
+                "text": stripped,
+            })
         if stripped.startswith("APPROVAL_NEEDED:"):
             self._ask_approval(stripped[len("APPROVAL_NEEDED:"):])
         else:
@@ -343,10 +413,8 @@ class Bridge:
 
         required = min(self.cfg.required_count(responsibility), len(approvers))
         approval_id = uuid.uuid4().hex[:12]
-        pending = PendingApproval(responsibility, title, detail, required)
-
-        with self.lock:
-            self.pending[approval_id] = pending
+        pending = PendingApproval(responsibility, title, detail, required, approvers)
+        self._remember(approval_id, pending)
 
         spec = self.cfg.responsibilities.get(responsibility, {})
         label = spec.get("name", responsibility)
@@ -555,6 +623,10 @@ def create_app(bridge: Bridge) -> Flask:
         with bridge.lock:
             open_approvals = sum(1 for p in bridge.pending.values() if not p.resolved)
         return jsonify({"status": "ok", "open_approvals": open_approvals})
+
+    @app.get("/state")
+    def state() -> Any:
+        return jsonify(bridge.state())
 
     return app
 
