@@ -1,0 +1,8 @@
+
+# Deployment artifacts
+*.pem
+user-data.sh
+.env
+.env.*
+deployment.log
+deployment-info.txt
