@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fix Flask API - Remote Trigger</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 500px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+        }
+        h1 {
+            font-size: 24px;
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        p {
+            color: #666;
+            margin: 0 0 20px 0;
+            line-height: 1.6;
+        }
+        button {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        .status.show {
+            display: block;
+        }
+        .status.loading {
+            background: #e0e7ff;
+            color: #3730a3;
+        }
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .code {
+            background: #f3f4f6;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 12px;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+        .option {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #667eea;
+        }
+        .option h3 {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Fix Flask API</h1>
+        <p>The Flask API needs to be updated. Choose how you'd like to fix it:</p>
+
+        <div class="option">
+            <h3>📱 Option 1: Manual SSH</h3>
+            <p>Copy and run this command in your terminal:</p>
+            <div class="code">ssh ubuntu@13.214.162.41 'bash -s' < <(curl -s https://raw.githubusercontent.com/Awannaphasch2016/gascity/main/gascity-aws-deploy/fix-flask-now.sh)</div>
+        </div>
+
+        <div class="option">
+            <h3>🔐 Option 2: Provide SSH Access</h3>
+            <p>If you can provide the SSH private key, I can fix it automatically. The key should be named <code>gascity-key.pem</code></p>
+        </div>
+
+        <div class="option">
+            <h3>💡 Option 3: AWS Console</h3>
+            <p>Go to AWS EC2 Console → Instance i-0817f3778a5c9e1e2 → Connect → EC2 Instance Connect</p>
+            <p>Then run:</p>
+            <div class="code">curl -s https://raw.githubusercontent.com/Awannaphasch2016/gascity/main/gascity-aws-deploy/fix-flask-now.sh | bash</div>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            <p style="font-size: 12px; color: #9ca3af; margin: 0;">
+                The fix replaces the Flask API with a working version. Takes ~5 seconds.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // If in the future we add an API endpoint for remote fix
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status show ' + type;
+        }
+    </script>
+</body>
+</html>

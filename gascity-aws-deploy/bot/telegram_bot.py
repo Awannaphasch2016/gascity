@@ -319,11 +319,15 @@ def poll_for_messages(app: Application):
                                 
                                 for approver in approvers:
                                     telegram_id = approver['telegram_id']
-                                    # Schedule the send in the asyncio loop
-                                    asyncio.run_coroutine_threadsafe(
-                                        send_approval_request(app, telegram_id, msg_data),
-                                        app.application.loop
-                                    )
+                                    # Create new event loop for this thread
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                    try:
+                                        loop.run_until_complete(
+                                            send_approval_request(app, telegram_id, msg_data)
+                                        )
+                                    finally:
+                                        loop.close()
         except Exception as e:
             logger.error(f"❌ Polling error: {e}")
         
