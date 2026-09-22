@@ -50,6 +50,40 @@ provider = "cursor"
 # The page the agent edits. Its edits are visible at the dashboard URL.
 work_dir = "/opt/gascity/site"
 prompt_template = "agents/builder/prompt.template.md"
+# Emitted as `--model <id>`. Cursor's catalog is account-scoped, so any id
+# `cursor-agent --list-models` reports is valid, and the option is open rather
+# than enumerated for that reason.
+#
+# Pinned rather than left on "auto", which resolves server-side per request and
+# records the choice nowhere on the host — so two edits in one conversation can
+# come from different models with no way to tell afterwards which wrote what.
+#
+# Opus is the model this agent wants. Its one piece of real judgment is choosing
+# a responsibility from what a change touches rather than from how it was worded,
+# and that is a reasoning task. It is not pinned here because every premium model
+# on this account is over its Pro allowance for the cycle ending 10/11/2026.
+#
+# Measured against the running city, one round trip each, every pin confirmed on
+# the process command line before testing:
+#
+#   claude-opus-5-thinking-high    over allowance
+#   claude-sonnet-5-thinking-high  over allowance
+#   gpt-5.3-codex-high             over allowance
+#   composer-2.5                   works; replied through reply.sh in ~72s
+#   auto                           works
+#
+# The failure mode of an over-allowance pin deserves attention. cursor-agent
+# reports spendLimitHit with an *empty* fallbackModel, so the session does not
+# degrade to a cheaper model — it answers nothing at all. Requests then time out
+# with no reply and no error anywhere but the agent's own pane, which is the
+# exact silence this system exists to prevent. When a request goes unanswered:
+#
+#   tmux -L factory capture-pane -p -t builder | tail -20
+#
+# Raising a spend limit at cursor.com/dashboard?tab=settings unblocks the premium
+# models; the limits offered were $10/$20/$30. After that this is a one-word edit
+# back to claude-opus-5-thinking-high.
+option_defaults = { model = "composer-2.5" }
 
 # A default route requires its target agent to resolve to a configured named
 # session so the delivery layer can wake a session for the conversation.
