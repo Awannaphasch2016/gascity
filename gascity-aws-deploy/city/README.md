@@ -19,6 +19,7 @@ holds all of that reasoning. The Go code and this config carry transport only.
 | `../site/index.html` | The page the agent edits; served as-is from the agent's work_dir |
 | `../nginx/factory-page.conf` | Serves that page on port 8080 |
 | `../test_extmsg_protocol.py` | Checks the transport without Telegram or an agent |
+| `../bot/drill_routing.py` | Walks one collaboration through every routing path and asserts each hop |
 
 ## The page is a plain page, not a Telegram Mini App
 
@@ -107,6 +108,33 @@ the agent's, made from the prompt's criteria and the actual request.
 `deployment_approval` needs two people, so both must press Approve before the
 agent is told.
 
+## Checking that the routing holds
+
+There are four routing shapes, and a phone shows only the ones it receives:
+a responsibility held by one reviewer, one held by a *different* reviewer, one
+needing a quorum, and a human answer travelling back in either direction. The
+third and fourth are where the failures hide. An approval attributed to the
+wrong reviewer looks identical from the outside to a correct one, and it made
+one reviewer's exclusive responsibilities unapprovable by anyone.
+
+`drill_routing.py` sends three requests through the same endpoint a typed
+Telegram message uses, then asserts each hop against the bridge's ledger — who
+the request went to, how many approvals it needs, who answered, what the agent
+did next, and whether `index.html` actually changed:
+
+```bash
+set -a; . /opt/gascity/bridge.env; set +a
+python3 bot/drill_routing.py            # all three steps
+python3 bot/drill_routing.py --step 2   # just one, after fixing something
+```
+
+It stops at each decision, because only a Telegram client can press a button.
+The approved edit is a real edit to the live page and is not rolled back.
+
+`GET /state` on the bridge is what it reads, and is worth curling directly when
+an approval seems stuck: it names every reviewer a request was routed to,
+everyone Telegram accepted it for, and every turn the agent has sent.
+
 ## When something does not happen
 
 Work outward from the agent:
@@ -116,6 +144,7 @@ gc status                                    # is the named session awake?
 tmux -L <city-name> capture-pane -p -t builder   # what is the agent showing?
 tail -f ~/.gc/supervisor.log | grep extmsg   # did the turn route?
 curl -s http://127.0.0.1:8081/health         # is the bridge holding open approvals?
+curl -s http://127.0.0.1:8081/state          # who was each one routed to, and who answered?
 ```
 
 A turn that routes but draws no reply almost always means the agent is stopped

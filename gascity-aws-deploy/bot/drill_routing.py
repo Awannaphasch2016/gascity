@@ -46,8 +46,10 @@ import bridge as mod
 # The agent is a cursor-agent session on a pinned model; a cold first turn has
 # been measured at ~70s, and it re-reads the page before answering.
 AGENT_TIMEOUT = 300.0
-# A human is reading their phone, possibly for the first time in an hour.
-HUMAN_TIMEOUT = 900.0
+# A human is reading their phone, possibly for the first time in an hour. A
+# step that times out is rerunnable on its own with --step, so this is generous
+# rather than tight.
+HUMAN_TIMEOUT = 1800.0
 POLL_INTERVAL = 3.0
 
 
