@@ -63,6 +63,14 @@ echo "==> stopping the Flask mock"
 # exits 1 when nothing matches, the normal case on a rerun.
 "${SSH[@]}" 'sudo pkill -f "[s]imple_gc_api" || true; sudo pkill -f "[t]elegram_bot.py" || true; echo "mock stopped"'
 
+echo "==> stopping any previous bridge"
+# Telegram allows one getUpdates consumer per bot token, so a stray bridge left
+# over from an earlier deploy steals updates from the new one at random. Stop the
+# service first, otherwise systemd restarts what pkill just killed.
+"${SSH[@]}" 'systemctl --user stop factory-bridge 2>/dev/null || true
+pkill -f "[b]ridge.py" || true
+echo "bridge stopped"'
+
 echo "==> uploading gc binary"
 # Built from this repo rather than fetched: there is no published release for
 # this fork, and the raw-CDN path served stale files during earlier deploys.
@@ -185,15 +193,41 @@ echo "    supervisor API on port ${API_PORT}"
 echo "==> verifying the transport"
 "${SSH[@]}" "cd ${REMOTE} && python3 test_extmsg_protocol.py --api http://127.0.0.1:${API_PORT} --city factory --wait 25"
 
-echo "==> starting the bridge"
+# A user service rather than nohup. A backgrounded process started over SSH is
+# a child of the login session and dies with it, which is invisible until an
+# approval goes unanswered: the controller keeps routing turns and the callbacks
+# have nowhere to land. systemd also restarts it after a crash, and -u keeps
+# python from buffering the log that is the only way to debug delivery.
+echo "==> installing the bridge service"
 "${SSH[@]}" bash -s <<REMOTE_SCRIPT
 set -euo pipefail
-set -a; . ${REMOTE}/factory.env; set +a
-export GC_API=http://127.0.0.1:${API_PORT}
-cd ${REMOTE}/bot
-nohup python3 bridge.py > ${REMOTE}/bridge.log 2>&1 &
-sleep 5
-tail -20 ${REMOTE}/bridge.log
+unitdir="\$HOME/.config/systemd/user"
+mkdir -p "\$unitdir"
+cat > "\$unitdir/factory-bridge.service" <<UNIT
+[Unit]
+Description=Telegram bridge for the Gas City approval factory
+After=gascity-supervisor.service
+Wants=gascity-supervisor.service
+
+[Service]
+Type=simple
+WorkingDirectory=${REMOTE}/bot
+EnvironmentFile=${REMOTE}/factory.env
+Environment=GC_API=http://127.0.0.1:${API_PORT}
+ExecStart=/usr/bin/python3 -u ${REMOTE}/bot/bridge.py
+Restart=always
+RestartSec=5
+StandardOutput=append:${REMOTE}/bridge.log
+StandardError=append:${REMOTE}/bridge.log
+
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable --now factory-bridge
+sleep 6
+systemctl --user is-active factory-bridge
+curl -sS -m 10 http://127.0.0.1:8081/health; echo
 REMOTE_SCRIPT
 
 cat <<DONE

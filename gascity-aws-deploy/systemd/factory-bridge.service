@@ -1,0 +1,26 @@
+[Unit]
+# A systemd user service rather than a backgrounded SSH process. A bridge
+# started with nohup over SSH is a child of the login session and is killed when
+# that session ends, which is invisible from the outside: the controller keeps
+# accepting turns, the agent keeps working, and its replies are POSTed to a
+# callback URL that nothing is listening on. The first symptom is an approval
+# that never arrives.
+Description=Telegram bridge for the Gas City approval factory
+After=gascity-supervisor.service
+Wants=gascity-supervisor.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gascity/bot
+EnvironmentFile=/opt/gascity/factory.env
+Environment=GC_API=http://127.0.0.1:8372
+# -u because this log is the only record of what Telegram accepted or rejected,
+# and a buffered log loses exactly the lines written before a crash.
+ExecStart=/usr/bin/python3 -u /opt/gascity/bot/bridge.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/gascity/bridge.log
+StandardError=append:/opt/gascity/bridge.log
+
+[Install]
+WantedBy=default.target
