@@ -12,8 +12,6 @@ Run: python3 -m pytest bot/test_bridge_registration.py
 
 from __future__ import annotations
 
-import pytest
-
 
 class FakeResponse:
     """Minimal stand-in for a requests.Response."""
