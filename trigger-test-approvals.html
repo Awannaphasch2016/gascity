@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Approval Triggers</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .card h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        
+        .card p {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .badge-both {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        
+        .badge-security {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        
+        .badge-budget {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        button {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        button:active {
+            transform: scale(0.98);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+            display: none;
+        }
+        
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+            display: block;
+        }
+        
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+            display: block;
+        }
+        
+        .status.loading {
+            background: #e0e7ff;
+            color: #3730a3;
+            display: block;
+        }
+        
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            font-size: 13px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏗️ Test Approval System</h1>
+            <p>Trigger test approval requests to your Telegram bots</p>
+        </div>
+
+        <!-- Test 1: Deployment Approval -->
+        <div class="card">
+            <span class="badge badge-both">👥 BOTH APPROVERS</span>
+            <h3>🚀 Deploy to Production</h3>
+            <p>New feature: Landing page builder v2.0 - includes hero section, feature cards, and testimonials. Ready to deploy?</p>
+            <button class="btn-primary" onclick="sendApproval('deployment')">
+                Send Deployment Approval
+            </button>
+            <div class="status" id="status-deployment"></div>
+        </div>
+
+        <!-- Test 2: Security Review -->
+        <div class="card">
+            <span class="badge badge-security">🔒 KARANT ONLY</span>
+            <h3>🛡️ Security Audit</h3>
+            <p>Please review authentication flow changes in PR #123. New OAuth2 implementation with refresh tokens.</p>
+            <button class="btn-primary" onclick="sendApproval('security')">
+                Send Security Review
+            </button>
+            <div class="status" id="status-security"></div>
+        </div>
+
+        <!-- Test 3: Budget Approval -->
+        <div class="card">
+            <span class="badge badge-budget">💰 YOU ONLY</span>
+            <h3>💵 Infrastructure Upgrade</h3>
+            <p>Requesting $200/month for additional EC2 instances to handle increased traffic.</p>
+            <button class="btn-primary" onclick="sendApproval('budget')">
+                Send Budget Approval
+            </button>
+            <div class="status" id="status-budget"></div>
+        </div>
+
+        <div class="footer">
+            <p>Check your Telegram bots for approval requests</p>
+            <p style="margin-top: 5px;">📊 <a href="http://13.214.162.41:8080" style="color: white; font-weight: 600;">View Mini App Dashboard</a></p>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://13.214.162.41:7375/v0/extmsg/inbound';
+
+        const approvals = {
+            deployment: {
+                client_id: 'deploy-agent',
+                message: 'APPROVAL_NEEDED: deployment_approval | Deploy to Production | New feature: Landing page builder v2.0 - includes hero section, feature cards, and testimonials. Ready to deploy?'
+            },
+            security: {
+                client_id: 'deploy-agent',
+                message: 'APPROVAL_NEEDED: security_review | Security Audit | Please review authentication flow changes in PR #123. New OAuth2 implementation with refresh tokens.'
+            },
+            budget: {
+                client_id: 'deploy-agent',
+                message: 'APPROVAL_NEEDED: budget_approval | Infrastructure Upgrade | Requesting $200/month for additional EC2 instances to handle increased traffic.'
+            }
+        };
+
+        async function sendApproval(type) {
+            const statusEl = document.getElementById(`status-${type}`);
+            statusEl.className = 'status loading';
+            statusEl.textContent = '⏳ Sending request...';
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(approvals[type])
+                });
+
+                if (response.ok) {
+                    statusEl.className = 'status success';
+                    statusEl.textContent = '✅ Request sent! Check your Telegram bot.';
+                    setTimeout(() => {
+                        statusEl.className = 'status';
+                    }, 5000);
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `❌ Error: ${error.message}. Check console for details.`;
+                console.error('Error sending approval:', error);
+            }
+        }
+    </script>
+</body>
+</html>

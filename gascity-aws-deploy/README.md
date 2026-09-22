@@ -2,6 +2,15 @@
 
 Complete deployment package for Gas City with Telegram bot and Doppler secrets management.
 
+## 📖 Documentation
+
+**IMPORTANT: Read these first!**
+
+- **[DEPLOYMENT_SUMMARY.md](./DEPLOYMENT_SUMMARY.md)** ⭐ **START HERE** - Complete overview of what's deployed
+- **[FIX_GUIDE.md](./FIX_GUIDE.md)** ⚠️ **ACTION NEEDED** - Fix Flask API (2 min)
+- **[DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md)** - Troubleshooting guide
+- **[MINI_APP_EXPLAINED.md](./MINI_APP_EXPLAINED.md)** - Dashboard architecture
+
 ## 📋 Prerequisites
 
 1. **Doppler Account** (get free at doppler.com)
