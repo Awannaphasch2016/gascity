@@ -19,6 +19,7 @@ Replies arrive by callback, so there is no polling loop.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -48,6 +49,19 @@ CONVERSATION_KIND = "dm"
 # opaque id and the bridge holds the rest in memory.
 APPROVE_PREFIX = "a:"
 REJECT_PREFIX = "r:"
+
+# HTML rather than Markdown, because every message interpolates text the agent
+# wrote and Telegram rejects a whole message when its markup does not parse.
+# Markdown reads the underscore in "EDIT_DONE" as an unclosed italic and drops
+# the message with "can't find end of the entity starting at byte offset 4", so
+# the edit lands on disk while the person who approved it hears nothing. HTML
+# needs only three characters escaped, which esc() below does exhaustively.
+PARSE_MODE = "HTML"
+
+
+def esc(text: str) -> str:
+    """Escape text for Telegram's HTML parse mode."""
+    return html.escape(text, quote=False)
 
 
 class Config:
@@ -201,7 +215,7 @@ class Telegram:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": "Markdown",
+            "parse_mode": PARSE_MODE,
         }
         if buttons:
             payload["reply_markup"] = {"inline_keyboard": buttons}
@@ -213,7 +227,7 @@ class Telegram:
             "chat_id": chat_id,
             "message_id": message_id,
             "text": text,
-            "parse_mode": "Markdown",
+            "parse_mode": PARSE_MODE,
         })
 
     def answer_callback(self, user: str, callback_id: str, text: str) -> None:
@@ -254,7 +268,14 @@ class Bridge:
         if stripped.startswith("APPROVAL_NEEDED:"):
             self._ask_approval(stripped[len("APPROVAL_NEEDED:"):])
         else:
-            self._broadcast(stripped)
+            self._broadcast(self._agent_turn_html(stripped))
+
+    def _agent_turn_html(self, text: str) -> str:
+        """Render one plain turn from the agent as Telegram-safe HTML."""
+        rendered = esc(text)
+        if self.cfg.page_url and text.startswith("EDIT_DONE:"):
+            rendered += f'\n\n<a href="{esc(self.cfg.page_url)}">View the page</a>'
+        return rendered
 
     def _ask_approval(self, body: str) -> None:
         """Parse an approval request and deliver it to whoever is responsible."""
@@ -262,9 +283,9 @@ class Bridge:
         if len(parts) < 3:
             log.error("malformed approval request: %r", body)
             self._broadcast(
-                "The agent sent a malformed approval request. Nothing was changed.\n\n"
-                f"`{body}`"
-            )
+                    "The agent sent a malformed approval request. Nothing was changed.\n\n"
+                    f"<code>{esc(body)}</code>"
+                )
             return
 
         responsibility, title, detail = parts[0], parts[1], " | ".join(parts[2:])
@@ -272,8 +293,8 @@ class Bridge:
         if not approvers:
             log.error("no approver for responsibility %r", responsibility)
             self._broadcast(
-                f"The agent asked for *{responsibility}* approval, but nobody holds that "
-                "responsibility. Nothing was changed."
+                f"The agent asked for <b>{esc(responsibility)}</b> approval, but nobody "
+                "holds that responsibility. Nothing was changed."
             )
             return
 
@@ -289,9 +310,9 @@ class Bridge:
         icon = spec.get("icon", "")
 
         message = (
-            f"{icon} *{label}*\n\n"
-            f"*{title}*\n{detail}\n\n"
-            f"_Approvals needed: {required}_"
+            f"{esc(icon)} <b>{esc(label)}</b>\n\n"
+            f"<b>{esc(title)}</b>\n{esc(detail)}\n\n"
+            f"<i>Approvals needed: {required}</i>"
         )
         buttons = [[
             {"text": "Approve", "callback_data": f"{APPROVE_PREFIX}{approval_id}"},
@@ -310,13 +331,11 @@ class Bridge:
                 pending.messages.append((name, message_id))
             log.info("approval %s sent to %s", approval_id, name)
 
-    def _broadcast(self, text: str) -> None:
-        """Send an informational turn to every configured user."""
-        if self.cfg.page_url and text.startswith("EDIT_DONE:"):
-            text = f"{text}\n\n[View the page]({self.cfg.page_url})"
+    def _broadcast(self, html_text: str) -> None:
+        """Send one already-escaped HTML message to every configured user."""
         for name, user in self.cfg.users.items():
             try:
-                self.tg.send(name, int(user["telegram_id"]), text)
+                self.tg.send(name, int(user["telegram_id"]), html_text)
             except Exception:
                 log.exception("broadcasting to %s", name)
 
@@ -326,7 +345,7 @@ class Bridge:
         """Forward a human message to the agent."""
         if text.strip().startswith("/start"):
             self.tg.send(actor, telegram_id, (
-                f"Connected as *{actor}*.\n\n"
+                f"Connected as <b>{esc(actor)}</b>.\n\n"
                 "Ask for a change to the landing page and I'll pass it to the agent. "
                 "The agent works out which section it touches and who has to approve "
                 "before it edits anything."
@@ -337,11 +356,13 @@ class Bridge:
             decision = self.gc.send_inbound(text, str(telegram_id), actor)
         except Exception as exc:
             log.exception("sending inbound to Gas City")
-            self.tg.send(actor, telegram_id, f"Could not reach the agent: `{exc}`")
+            self.tg.send(actor, telegram_id,
+                         f"Could not reach the agent: <code>{esc(str(exc))}</code>")
             return
 
         target = decision.get("TargetAgentName") or "the agent"
-        self.tg.send(actor, telegram_id, f"Sent to *{target}*. Waiting for its reply.")
+        self.tg.send(actor, telegram_id,
+                     f"Sent to <b>{esc(target)}</b>. Waiting for its reply.")
 
     def on_button(self, actor: str, callback_id: str, data: str) -> None:
         """Record a vote and, once the threshold is met, tell the agent."""
@@ -388,7 +409,7 @@ class Bridge:
             try:
                 self.tg.edit(
                     name, int(self.cfg.users[name]["telegram_id"]), message_id,
-                    f"*{pending.title}*\n{pending.detail}\n\n{note}",
+                    f"<b>{esc(pending.title)}</b>\n{esc(pending.detail)}\n\n{esc(note)}",
                 )
             except Exception:
                 log.exception("updating approval message for %s", name)
@@ -401,7 +422,8 @@ class Bridge:
         except Exception:
             log.exception("reporting decision %s to Gas City", approval_id)
             self._broadcast(
-                f"Recorded *{note}* but could not reach the agent. It will not act on this."
+                f"Recorded <b>{esc(note)}</b> but could not reach the agent. "
+                "It will not act on this."
             )
 
     # --- Telegram polling ------------------------------------------------
