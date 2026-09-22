@@ -1,0 +1,50 @@
+# Gas City configuration for the landing-page approval demo.
+#
+# Flow: the Telegram bridge registers as an external-messaging client and
+# forwards a human request as an inbound turn. The default route below binds
+# that conversation to the builder agent. The agent inspects the page, names
+# the section it intends to change, and waits for an approval turn before
+# writing anything.
+#
+# Nothing here decides which section changes or what the edit is. That
+# judgment lives in the agent's prompt template.
+
+[workspace]
+name = "factory"
+provider = "cursor"
+
+# Referencing a builtin provider still requires declaring it in the catalog.
+# builtin:cursor resolves to `cursor-agent -f --trust` and authenticates from
+# CURSOR_API_KEY.
+[providers.cursor]
+base = "builtin:cursor"
+
+# The Telegram bridge and the dashboard both talk to this listener. It stays on
+# loopback because both run on the same host as the controller.
+[api]
+port = 7375
+bind = "127.0.0.1"
+
+# Inbound conversations with no existing binding go to the builder agent.
+# "llm-client" is the provider name an HTTP client registers under via
+# POST /v0/extmsg/clients. The first inbound turn makes the binding sticky.
+[[extmsg.default_route]]
+provider = "llm-client"
+agent = "builder"
+
+[[agent]]
+name = "builder"
+description = "Maintains the landing page and requests human approval before editing it."
+provider = "cursor"
+# The page the agent edits. Its edits are visible at the dashboard URL.
+work_dir = "/opt/gascity/miniapp"
+prompt_template = "agents/builder/prompt.template.md"
+
+# A default route requires its target agent to resolve to a configured named
+# session so the delivery layer can wake a session for the conversation.
+# mode = "always" keeps it controller-managed rather than cold-starting on the
+# first message, which keeps the first approval from timing out.
+[[named_session]]
+name = "builder"
+template = "builder"
+mode = "always"

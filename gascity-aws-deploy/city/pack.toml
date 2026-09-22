@@ -1,0 +1,12 @@
+# Gas City requires the core and bd builtin packs. Declared by hand rather than
+# via `gc doctor --fix`, which rewrites city.toml and drops [[agent]] blocks.
+[pack]
+name = "factory"
+schema = 1
+
+[imports]
+[imports.core]
+source = "https://github.com/gastownhall/gascity/tree/main/internal/bootstrap/packs/core"
+
+[imports.bd]
+source = "https://github.com/gastownhall/gascity/tree/main/examples/bd"
