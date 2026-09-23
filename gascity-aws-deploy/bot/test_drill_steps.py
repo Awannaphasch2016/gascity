@@ -88,6 +88,7 @@ def approval(responsibility: str, asked: list[str], required: int, **overrides) 
         "approved_by": [],
         "rejected_by": None,
         "resolved": False,
+        "delivery_complete": True,
     }
     entry.update(overrides)
     return entry
@@ -229,6 +230,30 @@ def test_an_edit_after_a_rejection_fails(page, edits) -> None:
     assert any("page changed" in failure for failure in report.failures)
 
 
+def test_the_drill_waits_for_delivery_to_finish_before_judging_it(page) -> None:
+    """An entry read between two sends is not evidence of a failed delivery.
+
+    Live, the bridge reached the first reviewer at :41.2 and the second at :42.1,
+    and the drill read the ledger in between — reporting a routing failure on a
+    quorum that both reviewers went on to meet.
+    """
+    step = next(s for s in drill.STEPS if s.required > 1)
+    asked = sorted(step.asked)
+    partial = approval(step.responsibility, asked, step.required,
+                       delivered=asked[:1], delivery_complete=False)
+    complete = dict(partial, delivered=asked, delivery_complete=True)
+    approved = dict(complete, resolved=True, approved_by=asked)
+    ledger = FakeLedger(
+        approvals=[[], [partial], [complete], [approved]],
+        turns=[[], [turn("Published.")]],
+    )
+    report = drill.Report()
+
+    drill.run_step(step, 3, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
+
+    assert report.failures == []
+
+
 def test_an_approval_routed_to_the_wrong_reviewer_fails(page, edits) -> None:
     """The drill's whole purpose: a misrouted request must not pass."""
     step = next(s for s in drill.STEPS if s.asked == {"nordice"})
@@ -303,7 +328,7 @@ def test_a_vote_from_someone_not_asked_fails(page) -> None:
 
     drill.run_step(step, 2, 3, FakeGasCity(), ledger, FakeConfig(), page, report)
 
-    assert any("approved by" in failure for failure in report.failures)
+    assert any("votes from unasked" in failure for failure in report.failures)
 
 
 def test_the_page_is_read_before_the_request_not_after(page, edits) -> None:

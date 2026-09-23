@@ -84,6 +84,31 @@ def test_state_records_every_turn_the_agent_sent(shared_account_bridge, capture)
     assert all(turn["at"] for turn in bridge.state()["turns"])
 
 
+def test_state_says_when_delivery_is_still_in_progress(shared_account_bridge, capture, monkeypatch):
+    """A reader must be able to tell a partial delivery from a failed one.
+
+    Sending to two reviewers takes a second, and an entry read between the two
+    sends lists one reviewer under `delivered`. Without a flag, that is
+    indistinguishable from Telegram having refused the other — which is exactly
+    what the routing drill reported on a quorum that both reviewers then met.
+    """
+    bridge = shared_account_bridge
+    capture(bridge)
+    seen_mid_delivery = []
+    real_send = bridge.tg.send
+
+    def observing_send(user, chat, text, buttons=None):
+        seen_mid_delivery.append(approval(bridge)["delivery_complete"])
+        return real_send(user, chat, text, buttons)
+
+    monkeypatch.setattr(bridge.tg, "send", observing_send)
+
+    bridge._ask_approval("deployment_approval | publish the page | push it live")
+
+    assert seen_mid_delivery == [False, False]
+    assert approval(bridge)["delivery_complete"] is True
+
+
 def test_state_is_json_serializable(shared_account_bridge, capture, press):
     """The ledger is served over HTTP, so it may hold no sets or objects."""
     bridge = shared_account_bridge

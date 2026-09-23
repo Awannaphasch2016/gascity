@@ -217,7 +217,8 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
     entry = next(
         (candidate for candidate in existing
          if candidate["responsibility"] == step.responsibility
-         and not candidate["resolved"]),
+         and not candidate["resolved"]
+         and candidate["delivery_complete"]),
         None,
     )
     if entry is not None:
@@ -229,8 +230,10 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
         report.note(f'sent as {step.sender}: "{step.request}"')
 
         def new_approval() -> dict[str, Any] | None:
+            # Judged only once every send has been attempted. Read between two
+            # sends, `delivered` names one reviewer and looks like a refusal.
             for candidate in ledger.approvals():
-                if candidate["id"] not in seen_ids:
+                if candidate["id"] not in seen_ids and candidate["delivery_complete"]:
                     return candidate
             return None
 
@@ -268,7 +271,7 @@ def run_step(step: Step, index: int, total: int, gc: Any, ledger: Ledger,
         # Every vote must come from someone who holds the responsibility, and
         # there must be as many as the responsibility demands. A quorum met by
         # one reviewer voting twice, or by someone never asked, is not a quorum.
-        report.check("approved by", sorted(set(decided["approved_by"]) - step.asked), [])
+        report.check("votes from unasked", sorted(set(decided["approved_by"]) - step.asked), [])
         report.check("approvals recorded", len(set(decided["approved_by"])), step.required)
     else:
         report.note(f"{decided['rejected_by']} rejected it; "

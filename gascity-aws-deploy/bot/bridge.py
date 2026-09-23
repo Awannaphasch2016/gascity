@@ -140,6 +140,10 @@ class PendingApproval:
         # Message coordinates so every approver's copy can be updated once the
         # request resolves, rather than leaving stale buttons on their phones.
         self.messages: list[tuple[str, int]] = []
+        # Sending to several reviewers takes a second each. Until this is set, a
+        # reader seeing one name under `delivered` cannot tell "not yet" from
+        # "Telegram refused", and the two call for opposite reactions.
+        self.delivery_complete = False
 
     def snapshot(self) -> dict[str, Any]:
         """Return this approval's routing state as JSON-safe data.
@@ -158,6 +162,7 @@ class PendingApproval:
             "approved_by": sorted(self.approvals),
             "rejected_by": self.rejected_by,
             "resolved": self.resolved,
+            "delivery_complete": self.delivery_complete,
         }
 
 
@@ -441,6 +446,8 @@ class Bridge:
             with self.lock:
                 pending.messages.append((name, message_id))
             log.info("approval %s sent to %s", approval_id, name)
+        with self.lock:
+            pending.delivery_complete = True
 
     def _broadcast(self, html_text: str) -> None:
         """Send one already-escaped HTML message to every configured user."""
