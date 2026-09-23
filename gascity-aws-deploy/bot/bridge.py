@@ -42,6 +42,7 @@ import requests
 from flask import Flask, jsonify, request
 
 import factory_router as fr
+import github_delivery as gd
 
 log = logging.getLogger("bridge")
 
@@ -74,6 +75,22 @@ PARSE_MODE = "HTML"
 # request it ever handled.
 APPROVAL_HISTORY = 100
 TURN_HISTORY = 100
+
+
+def github_delivery_from_env() -> gd.GitHubDelivery | None:
+    """Build the publisher when both the token and the projects directory are set.
+
+    Either one missing leaves delivery off, and a DELIVER request is answered
+    DELIVERY_UNAVAILABLE instead of being attempted halfway.
+    """
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    projects_dir = os.getenv("FACTORY_PROJECTS_DIR", "").strip()
+    if not token or not projects_dir:
+        log.info("github delivery off: %s",
+                 "GITHUB_TOKEN unset" if not token else "FACTORY_PROJECTS_DIR unset")
+        return None
+    log.info("github delivery on: projects in %s", projects_dir)
+    return gd.GitHubDelivery(token, projects_dir)
 
 
 def esc(text: str) -> str:
@@ -399,6 +416,7 @@ class Bridge:
                 users=cfg.users, responsibilities=cfg.responsibilities,
                 account_id=cfg.account_id, tg=self.tg, gc=self.gc,
                 store=fr.ProjectStore(cfg.project_state_dir),
+                delivery=github_delivery_from_env(),
             )
 
     def _project_for(self, conversation: dict[str, Any] | None) -> fr.Project | None:

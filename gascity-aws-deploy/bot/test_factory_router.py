@@ -326,6 +326,46 @@ def test_deliver_is_answered_as_unavailable_until_delivery_exists(router):
     assert admin
 
 
+class RecordingDelivery:
+    def __init__(self, url: str = "https://github.com/you/bakery", fail: str = "") -> None:
+        self.url = url
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+
+    def publish(self, name: str, visibility: str) -> str:
+        self.calls.append((name, visibility))
+        if self.fail:
+            raise fr.DeliveryError(self.fail)
+        return self.url
+
+
+def test_deliver_publishes_and_reports_the_url(router):
+    r, tg, gc, _ = router
+    project = register(r)
+    delivery = RecordingDelivery()
+    r.delivery = delivery
+    tg.sent.clear()
+
+    r.on_publish(project, "DELIVER: private", session_id="gc-30")
+
+    assert delivery.calls == [("bakery", "private")]
+    assert gc.inbound[-1]["text"] == "DELIVERED: https://github.com/you/bakery"
+    admin = [m for m in tg.sent if m["user"] == "you" and "github.com/you/bakery" in m["text"]]
+    assert admin
+
+
+def test_a_failed_publish_is_reported_to_the_agent_and_the_admins(router):
+    r, tg, gc, _ = router
+    project = register(r)
+    r.delivery = RecordingDelivery(fail="git push failed: rejected")
+    tg.sent.clear()
+
+    r.on_publish(project, "DELIVER: private", session_id="gc-30")
+
+    assert gc.inbound[-1]["text"] == "DELIVERY_FAILED: git push failed: rejected"
+    assert any("rejected" in m["text"] for m in tg.sent if m["user"] == "you")
+
+
 # --- Phase cues from the event stream ---------------------------------------
 
 def test_step_started_and_step_closed_events_become_phase_notes(router):

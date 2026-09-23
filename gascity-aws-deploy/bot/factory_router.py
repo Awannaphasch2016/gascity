@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import github_delivery as gd
+
 log = logging.getLogger("factory")
 
 PROVIDER = "telegram"
@@ -42,11 +44,14 @@ QUESTIONS_TAG = "QUESTIONS:"
 APPROVAL_TAG = "APPROVAL_NEEDED:"
 DELIVER_TAG = "DELIVER:"
 
-# What the bridge sends back to the agent when the human has spoken.
+# What the bridge sends back to the agent when it was asked to publish and
+# cannot. DELIVERY_UNAVAILABLE means no credential is configured at all;
+# DELIVERY_FAILED means it tried and GitHub or git refused.
 DELIVERY_UNAVAILABLE = (
-    "DELIVERY_UNAVAILABLE: this bridge cannot push to GitHub yet; tell the "
-    "roster the repository is ready locally and where it is."
+    "DELIVERY_UNAVAILABLE: this bridge has no GitHub token, so it cannot "
+    "publish. The repository is complete in its rig."
 )
+DeliveryError = gd.DeliveryError
 
 
 def esc(text: str) -> str:
@@ -224,13 +229,15 @@ class FactoryRouter:
     """Routes project traffic between agents and the people on the roster."""
 
     def __init__(self, users: dict[str, dict[str, Any]], responsibilities: dict[str, dict[str, Any]],
-                 account_id: str, tg: Any, gc: Any, store: ProjectStore) -> None:
+                 account_id: str, tg: Any, gc: Any, store: ProjectStore,
+                 delivery: gd.GitHubDelivery | None = None) -> None:
         self.users = users
         self.responsibilities = responsibilities
         self.account_id = account_id
         self.tg = tg
         self.gc = gc
         self.store = store
+        self.delivery = delivery
         self.lock = threading.RLock()
         self.pending: dict[str, PendingApproval] = {}
         self.projects: dict[str, Project] = {p.name: p for p in store.load_all(set(users))}
@@ -409,12 +416,26 @@ class FactoryRouter:
             pending.messages.append((user, chat, message_id))
 
     def _deliver(self, project: Project, visibility: str) -> None:
+        if self.delivery is None:
+            for admin in project.roster.admins:
+                self._send(project, admin, (
+                    f"The agent asked to deliver <b>{esc(project.name)}</b> ({esc(visibility)}), but this "
+                    "bridge has no GitHub token. The repository is complete in its rig."
+                ))
+            self._inbound(project, DELIVERY_UNAVAILABLE, "bridge", "bridge")
+            return
+        try:
+            url = self.delivery.publish(project.name, visibility)
+        except gd.DeliveryError as exc:
+            for admin in project.roster.admins:
+                self._send(project, admin, f"Delivery of <b>{esc(project.name)}</b> failed: {esc(str(exc))}")
+            self._inbound(project, f"DELIVERY_FAILED: {exc}", "bridge", "bridge")
+            return
         for admin in project.roster.admins:
             self._send(project, admin, (
-                f"The agent asked to deliver <b>{esc(project.name)}</b> ({esc(visibility)}), but GitHub "
-                "delivery is not configured on this bridge yet. The repository is complete in its rig."
+                f"Delivered <b>{esc(project.name)}</b>.\n<a href=\"{esc(url)}\">{esc(url)}</a>"
             ))
-        self._inbound(project, DELIVERY_UNAVAILABLE, "bridge", "bridge")
+        self._inbound(project, f"DELIVERED: {url}", "bridge", "bridge")
 
     def _inbound(self, project: Project, text: str, actor_id: str, actor_name: str) -> bool:
         try:

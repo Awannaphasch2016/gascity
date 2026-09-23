@@ -202,6 +202,9 @@ BRIDGE_PORT=8081
 PAGE_URL=http://${HOST}:8080/
 # Turns on factory routing: projects, desks, topics. One JSON file per project.
 PROJECT_STATE_DIR=${REMOTE}/state/projects
+# Where finished projects are pushed from. The token stays in this file, which
+# only the bridge reads, so an agent cannot publish on its own.
+FACTORY_PROJECTS_DIR=${REMOTE}/projects
 ${GITHUB_TOKEN:+GITHUB_TOKEN=${GITHUB_TOKEN}}
 ENV_FILE
 "${SSH[@]}" "chmod 600 ${REMOTE}/controller.env ${REMOTE}/bridge.env"
