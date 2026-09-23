@@ -89,15 +89,46 @@ if ldd ./gc >/dev/null 2>&1; then
   exit 1
 fi
 scp "${SSH_OPTS[@]}" ./gc "ubuntu@${HOST}:/tmp/gc"
-"${SSH[@]}" "sudo mv -f /tmp/gc ${REMOTE}/gc && sudo chmod +x ${REMOTE}/gc"
+"${SSH[@]}" "sudo mv -f /tmp/gc ${REMOTE}/gc && sudo chmod +x ${REMOTE}/gc && sudo ln -sfn ${REMOTE}/gc /usr/local/bin/gc"
 
-echo "==> uploading city config and bridge"
-"${SSH[@]}" "sudo mkdir -p ${REMOTE}/city ${REMOTE}/config ${REMOTE}/bot && sudo chown -R ubuntu:ubuntu ${REMOTE}"
+echo "==> uploading city config, factory pack, and bridge"
+"${SSH[@]}" "sudo mkdir -p ${REMOTE}/city ${REMOTE}/config ${REMOTE}/bot ${REMOTE}/packs ${REMOTE}/projects ${REMOTE}/state/projects && sudo chown -R ubuntu:ubuntu ${REMOTE}"
 scp "${SSH_OPTS[@]}" -r ./city/. "ubuntu@${HOST}:${REMOTE}/city/"
+scp "${SSH_OPTS[@]}" -r ./packs/. "ubuntu@${HOST}:${REMOTE}/packs/"
 scp "${SSH_OPTS[@]}" ./config/responsibilities.json "ubuntu@${HOST}:${REMOTE}/config/"
-scp "${SSH_OPTS[@]}" ./bot/bridge.py ./bot/drill_routing.py ./bot/requirements.txt \
+scp "${SSH_OPTS[@]}" ./bot/bridge.py ./bot/factory_router.py ./bot/factory.py ./bot/drill_routing.py ./bot/requirements.txt \
   "ubuntu@${HOST}:${REMOTE}/bot/"
 scp "${SSH_OPTS[@]}" ./test_extmsg_protocol.py "ubuntu@${HOST}:${REMOTE}/"
+
+# gc's hook-claim path shells out to `bd` even on the file bead store, and
+# this host has no bd. The shim in city/bin serves exactly the verbs gc uses,
+# over the supervisor API, and refuses the rest loudly. It goes on PATH for
+# the agent sessions the supervisor spawns; gc itself follows for step.sh.
+echo "==> installing the bd shim and the factory command"
+"${SSH[@]}" bash -s <<REMOTE_SCRIPT
+set -euo pipefail
+sudo install -m 755 ${REMOTE}/city/bin/bd /usr/local/bin/bd
+chmod +x ${REMOTE}/packs/factory/scripts/*.sh ${REMOTE}/bot/factory.py
+cat > ${REMOTE}/factory.env <<ENV
+# Read by the factory command (bin below) and by nothing else.
+GC_BEADS=file
+GC_CITY_DIR=${REMOTE}/city
+FACTORY_PACK_DIR=${REMOTE}/packs/factory
+FACTORY_PROJECTS_DIR=${REMOTE}/projects
+FACTORY_API=http://127.0.0.1:8372/v0/city/factory
+BRIDGE_URL=http://127.0.0.1:8081
+ENV
+sudo tee /usr/local/bin/factory >/dev/null <<'WRAPPER'
+#!/usr/bin/env bash
+# Start or restart a factory project. See bot/factory.py.
+set -a; . ${REMOTE}/factory.env; set +a
+export PATH="${REMOTE}:\$HOME/.local/bin:\$PATH"
+exec python3 ${REMOTE}/bot/factory.py "\$@"
+WRAPPER
+sudo chmod 755 /usr/local/bin/factory
+bd 2>&1 | head -1 || true
+echo "bd shim and factory command installed"
+REMOTE_SCRIPT
 
 # Seed the page the agent edits, but never overwrite it on a re-deploy: the
 # agent's approved edits live in this file and are the point of the exercise.
@@ -169,6 +200,9 @@ CONFIG_PATH=${REMOTE}/config/responsibilities.json
 BRIDGE_CALLBACK_URL=http://127.0.0.1:8081
 BRIDGE_PORT=8081
 PAGE_URL=http://${HOST}:8080/
+# Turns on factory routing: projects, desks, topics. One JSON file per project.
+PROJECT_STATE_DIR=${REMOTE}/state/projects
+${GITHUB_TOKEN:+GITHUB_TOKEN=${GITHUB_TOKEN}}
 ENV_FILE
 "${SSH[@]}" "chmod 600 ${REMOTE}/controller.env ${REMOTE}/bridge.env"
 
@@ -279,4 +313,15 @@ when it stops:
 
 If a request routes but nothing comes back, check the agent's pane:
   ssh -i ${KEY} ubuntu@${HOST} 'tmux -L factory capture-pane -p -t builder'
+
+To start a factory project (one rig, one repository, its own Telegram rooms):
+
+  ssh -i ${KEY} ubuntu@${HOST}
+  factory new <name> --brief brief.md --roster roster.json     # roster: see packs/factory/roster.example.json
+  factory list
+  factory restart <name>                                        # close the run, fresh rooms, start over
+
+Rooms are topics in each person's desk when responsibilities.json gives them a
+desk_chat_id (a supergroup with Topics where the bot is an admin with
+can_manage_topics); otherwise the project talks to them in the bot's DM.
 DONE

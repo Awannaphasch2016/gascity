@@ -22,6 +22,17 @@ GC_REPLY_URL = "http://127.0.0.1:8372/v0/city/factory/extmsg/outbound"
 GC_PROVIDER_NAME = "telegram"
 GC_ACCOUNT_ID = "factory"
 GC_CONVERSATION_ID = "landing-page"
+# The factory pack (packs/factory) is installed on every project rig. Its
+# agents read checklists and doc templates from FACTORY_HOME, and the bd shim
+# in city/bin serves gc's store verbs over FACTORY_API on the file bead store.
+FACTORY_HOME = "/opt/gascity/packs/factory"
+FACTORY_API = "http://127.0.0.1:8372/v0/city/factory"
+
+# The host has no Dolt; beads live in .gc/beads.json per scope. Declared here
+# and not only as GC_BEADS in the environment, because a rig-scoped store
+# (GC_BEADS_SCOPE_ROOT set) takes its provider from this file.
+[beads]
+provider = "file"
 
 # Referencing a builtin provider still requires declaring it in the catalog.
 # builtin:cursor resolves to `cursor-agent -f --trust` and authenticates from
