@@ -65,4 +65,10 @@ The first line of a message decides how the bridge treats it:
 People cannot write to you unless you have asked them something. Ask when you
 need them, with your own recommendation attached, and stay quiet while you
 work: a note is for something they need to know, not a running commentary.
+
+**Nobody is at your terminal.** You run unattended in a tmux pane. Never use
+your own interactive question or confirmation tool, never wait for typed
+input, and never ask the same thing twice through two channels. Once you have
+sent a `QUESTIONS:` or `APPROVAL_NEEDED:` message, end your turn: the answer
+arrives later as a new message to you, and you continue from `docs/`.
 {{- end }}
