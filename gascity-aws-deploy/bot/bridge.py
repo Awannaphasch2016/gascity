@@ -13,8 +13,15 @@ have):
   POST /v0/city/{city}/extmsg/adapters   register, with a callback_url
   POST /v0/city/{city}/extmsg/inbound    deliver a human turn to the agent
   POST <callback_url>/publish            Gas City delivers the agent's reply here
+  GET  /v0/city/{city}/events/stream     workflow lifecycle, for phase cues
 
 Replies arrive by callback, so there is no polling loop.
+
+Traffic that belongs to a factory project — its conversation is the rig name —
+is handed to the FactoryRouter, which owns desks, topics, and the rule that a
+person may only speak when an agent is waiting on them. The landing-page flow
+below remains for DMs no project is waiting on. The router is enabled by
+PROJECT_STATE_DIR.
 """
 
 from __future__ import annotations
@@ -29,10 +36,12 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 import requests
 from flask import Flask, jsonify, request
+
+import factory_router as fr
 
 log = logging.getLogger("bridge")
 
@@ -84,6 +93,9 @@ class Config:
         self.callback_url = os.environ["BRIDGE_CALLBACK_URL"].rstrip("/")
         self.listen_port = int(os.getenv("BRIDGE_PORT", "8081"))
         self.page_url = os.getenv("PAGE_URL", "")
+        # Where the factory router keeps its projects. Unset means no factory:
+        # the bridge is then only the landing-page approval channel.
+        self.project_state_dir = os.getenv("PROJECT_STATE_DIR", "").strip()
 
         with open(os.environ["CONFIG_PATH"], encoding="utf-8") as fh:
             doc = json.load(fh)
@@ -209,8 +221,13 @@ class GasCityClient:
             for item in items
         )
 
-    def send_inbound(self, text: str, actor_id: str, actor_name: str) -> dict[str, Any]:
-        """Deliver a human turn to the agent and return the routing decision."""
+    def send_inbound(self, text: str, actor_id: str, actor_name: str,
+                     conversation: dict[str, str] | None = None) -> dict[str, Any]:
+        """Deliver a human turn to the agent and return the routing decision.
+
+        Without a conversation the turn lands on the bridge's default one, the
+        landing page. Factory projects pass their own: the rig, as a room.
+        """
         body = {
             "message": {
                 "provider_message_id": str(uuid.uuid4()),
@@ -221,7 +238,7 @@ class GasCityClient:
                     "display_name": actor_name,
                     "is_bot": False,
                 },
-                "conversation": {
+                "conversation": conversation or {
                     "provider": PROVIDER,
                     "account_id": self.cfg.account_id,
                     "conversation_id": self.cfg.conversation_id,
@@ -233,6 +250,53 @@ class GasCityClient:
         resp = self.session.post(self._url("inbound"), json=body, timeout=60)
         resp.raise_for_status()
         return resp.json()
+
+    def stream_events(self, last_id: str | None) -> Iterator[tuple[str, dict[str, Any]]]:
+        """Follow the city's event stream, yielding (event id, event).
+
+        With no cursor the server starts from now; with Last-Event-ID it
+        replays what this bridge missed while it was away, so a phase cue is
+        not lost to a restart. Returns when the server closes the connection;
+        the caller reconnects with the last id it saw.
+        """
+        headers = {"Accept": "text/event-stream"}
+        if last_id:
+            headers["Last-Event-ID"] = last_id
+        resp = self.session.get(
+            f"{self.cfg.gc_api}/v0/city/{self.cfg.city}/events/stream",
+            headers=headers, stream=True, timeout=(15, 90),
+        )
+        resp.raise_for_status()
+        yield from iter_sse(resp.iter_lines(decode_unicode=True))
+
+
+def iter_sse(lines: Iterable[str]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Parse server-sent-event frames into (id, decoded JSON data).
+
+    A frame is a run of fields ended by a blank line. Comment lines (":") are
+    keepalives. Frames whose data is not JSON are reported and skipped rather
+    than ending the stream, since one bad frame must not silence phase cues.
+    """
+    event_id = ""
+    data: list[str] = []
+    for raw in lines:
+        line = raw.rstrip("\r")
+        if line == "":
+            if data:
+                try:
+                    yield event_id, json.loads("\n".join(data))
+                except json.JSONDecodeError:
+                    log.error("unparseable SSE frame id=%r: %r", event_id, "\n".join(data)[:200])
+            event_id, data = "", []
+            continue
+        if line.startswith(":"):
+            continue
+        field, _, value = line.partition(":")
+        value = value[1:] if value.startswith(" ") else value
+        if field == "id":
+            event_id = value
+        elif field == "data":
+            data.append(value)
 
 
 class Telegram:
@@ -253,16 +317,42 @@ class Telegram:
         return body["result"]
 
     def send(self, user: str, chat_id: int, text: str,
-             buttons: list[list[dict[str, str]]] | None = None) -> int:
-        """Send a message as user's bot and return the Telegram message id."""
+             buttons: list[list[dict[str, str]]] | None = None,
+             thread_id: int | None = None) -> int:
+        """Send a message as user's bot and return the Telegram message id.
+
+        thread_id addresses a topic inside a desk supergroup; without it the
+        message goes to the chat itself (a DM, or a desk's General topic).
+        """
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
             "parse_mode": PARSE_MODE,
         }
+        if thread_id is not None:
+            payload["message_thread_id"] = thread_id
         if buttons:
             payload["reply_markup"] = {"inline_keyboard": buttons}
         return self._call(self.tokens[user], "sendMessage", payload)["message_id"]
+
+    # Forum topics: the bot must be an admin of the desk with can_manage_topics.
+
+    def create_forum_topic(self, user: str, chat_id: int, name: str) -> int:
+        """Create a topic in a desk and return its thread id."""
+        result = self._call(self.tokens[user], "createForumTopic", {"chat_id": chat_id, "name": name[:128]})
+        return int(result["message_thread_id"])
+
+    def close_forum_topic(self, user: str, chat_id: int, thread_id: int) -> None:
+        """Close a topic so members cannot post in it."""
+        self._call(self.tokens[user], "closeForumTopic", {"chat_id": chat_id, "message_thread_id": thread_id})
+
+    def reopen_forum_topic(self, user: str, chat_id: int, thread_id: int) -> None:
+        """Reopen a topic so its owner can answer."""
+        self._call(self.tokens[user], "reopenForumTopic", {"chat_id": chat_id, "message_thread_id": thread_id})
+
+    def delete_forum_topic(self, user: str, chat_id: int, thread_id: int) -> None:
+        """Delete a topic and everything in it."""
+        self._call(self.tokens[user], "deleteForumTopic", {"chat_id": chat_id, "message_thread_id": thread_id})
 
     def edit(self, user: str, chat_id: int, message_id: int, text: str) -> None:
         """Replace a message's text and drop its buttons."""
@@ -303,6 +393,19 @@ class Bridge:
         self.pending: dict[str, PendingApproval] = {}
         self.turns: deque[dict[str, str]] = deque(maxlen=TURN_HISTORY)
         self.lock = threading.Lock()
+        self.factory: fr.FactoryRouter | None = None
+        if cfg.project_state_dir:
+            self.factory = fr.FactoryRouter(
+                users=cfg.users, responsibilities=cfg.responsibilities,
+                account_id=cfg.account_id, tg=self.tg, gc=self.gc,
+                store=fr.ProjectStore(cfg.project_state_dir),
+            )
+
+    def _project_for(self, conversation: dict[str, Any] | None) -> fr.Project | None:
+        """Return the factory project a conversation belongs to, if any."""
+        if self.factory is None or not conversation:
+            return None
+        return self.factory.project_for_conversation(str(conversation.get("conversation_id", "")))
 
     # --- Routing ledger ---------------------------------------------------
 
@@ -375,14 +478,24 @@ class Bridge:
 
     # --- Gas City -> Telegram -------------------------------------------
 
-    def on_publish(self, text: str) -> None:
-        """Handle one outbound turn from the agent."""
+    def on_publish(self, text: str, conversation: dict[str, Any] | None = None,
+                   session_id: str = "") -> None:
+        """Handle one outbound turn from the agent.
+
+        A turn on a project's conversation is the router's; anything else is
+        the landing-page flow.
+        """
         stripped = text.strip()
         with self.lock:
             self.turns.append({
                 "at": datetime.now(timezone.utc).isoformat(),
                 "text": stripped,
+                "conversation": str((conversation or {}).get("conversation_id", "")),
             })
+        project = self._project_for(conversation)
+        if project is not None and self.factory is not None:
+            self.factory.on_publish(project, stripped, session_id)
+            return
         if stripped.startswith("APPROVAL_NEEDED:"):
             self._ask_approval(stripped[len("APPROVAL_NEEDED:"):])
         else:
@@ -494,6 +607,11 @@ class Bridge:
 
         with self.lock:
             pending = self.pending.get(approval_id)
+        if pending is None and self.factory is not None:
+            if self.factory.on_button(actor, callback_id, approval_id, approved):
+                return
+
+        with self.lock:
             if pending is None:
                 self.tg.answer_callback(actor, callback_id, "That request is no longer open.")
                 return
@@ -546,19 +664,49 @@ class Bridge:
 
     # --- Telegram polling ------------------------------------------------
 
-    def poll(self, user: str) -> None:
-        """Long-poll one bot forever, dispatching its updates."""
+    def polling_groups(self) -> list[list[str]]:
+        """Group users by bot token: Telegram allows one getUpdates consumer per bot.
+
+        The drill config gives every reviewer their own bot; the factory gives
+        everyone one bot. Both shapes poll each token exactly once.
+        """
+        groups: dict[str, list[str]] = {}
+        for user, token in self.cfg.tokens.items():
+            groups.setdefault(token, []).append(user)
+        return list(groups.values())
+
+    def actor_for(self, users: list[str], update: dict[str, Any]) -> str:
+        """Pick which of a bot's users an update is from.
+
+        With one user per bot, the bot identifies them and the sender's account
+        only authorizes them (two reviewers may share one phone). With several
+        users on one bot, the sender's account is the only identity there is;
+        an unknown sender resolves to the first user, whose ownership check
+        then refuses them.
+        """
+        if len(users) == 1:
+            return users[0]
+        source = update.get("callback_query") or update.get("message") or {}
+        sender = int((source.get("from") or {}).get("id", 0))
+        for user in users:
+            if self.cfg.owns_account(user, sender):
+                return user
+        return users[0]
+
+    def poll(self, users: list[str]) -> None:
+        """Long-poll one bot forever, dispatching its updates to its users."""
         offset = 0
         while True:
             try:
-                updates = self.tg.get_updates(user, offset)
+                updates = self.tg.get_updates(users[0], offset)
             except Exception:
-                log.exception("polling %s", user)
+                log.exception("polling %s", users)
                 time.sleep(5)
                 continue
 
             for update in updates:
                 offset = update["update_id"] + 1
+                user = self.actor_for(users, update)
                 try:
                     self._dispatch(user, update)
                 except Exception:
@@ -575,6 +723,10 @@ class Bridge:
         total: the other reviewer's exclusive responsibilities become
         unapprovable by anyone, and a responsibility needing two approvals can
         never reach two.
+
+        Messages from inside a desk (a group chat) belong to the factory: the
+        project topic decides who may speak, and anything else said in the desk
+        is between the people in it, not for the agent.
         """
         if "callback_query" in update:
             query = update["callback_query"]
@@ -590,14 +742,47 @@ class Bridge:
         if not message or "text" not in message:
             return
         telegram_id = message["from"]["id"]
+        chat_id = int((message.get("chat") or {}).get("id", telegram_id))
+        in_group = chat_id != telegram_id
+        thread_id = message.get("message_thread_id") if message.get("is_topic_message") else None
         if not self.cfg.owns_account(user, telegram_id):
+            if in_group:
+                log.info("ignoring message from %s in desk %s", telegram_id, chat_id)
+                return
             self.tg.send(
                 user, telegram_id,
                 "This bot answers to a different Telegram account. Set this user's "
                 "telegram_id in responsibilities.json to act as them.",
             )
             return
+        if self.factory is not None and self.factory.on_message(user, chat_id, thread_id, message["text"]):
+            return
+        if in_group:
+            return
         self.on_message(user, telegram_id, message["text"])
+
+    # --- Event stream ------------------------------------------------------
+
+    def follow_events_once(self, last_id: str | None) -> str | None:
+        """Consume one connection's worth of events; return the last id seen."""
+        assert self.factory is not None
+        for event_id, event in self.gc.stream_events(last_id):
+            last_id = event_id or last_id
+            try:
+                self.factory.on_event(event)
+            except Exception:
+                log.exception("handling event %s", event.get("type"))
+        return last_id
+
+    def follow_events(self) -> None:
+        """Keep the factory's phase cues flowing for as long as the bridge runs."""
+        last_id: str | None = None
+        while True:
+            try:
+                last_id = self.follow_events_once(last_id)
+            except Exception:
+                log.exception("event stream dropped; reconnecting")
+            time.sleep(5)
 
 
 def create_app(bridge: Bridge) -> Flask:
@@ -609,9 +794,9 @@ def create_app(bridge: Bridge) -> Flask:
         body = request.get_json(silent=True) or {}
         conversation = body.get("conversation", {})
         text = body.get("text", "")
-        log.info("publish: %r", text[:200])
+        log.info("publish on %r: %r", conversation.get("conversation_id"), text[:200])
         try:
-            bridge.on_publish(text)
+            bridge.on_publish(text, conversation=conversation, session_id=str(body.get("session_id", "")))
         except Exception:
             log.exception("handling publish")
             return jsonify({
@@ -634,6 +819,52 @@ def create_app(bridge: Bridge) -> Flask:
     @app.get("/state")
     def state() -> Any:
         return jsonify(bridge.state())
+
+    # --- Factory projects. The intake command (factory.py) drives these. ---
+
+    def factory_or_503() -> tuple[fr.FactoryRouter | None, Any]:
+        if bridge.factory is None:
+            return None, (jsonify({"error": "factory routing is off: PROJECT_STATE_DIR is unset"}), 503)
+        return bridge.factory, None
+
+    @app.get("/projects")
+    def list_projects() -> Any:
+        factory, refusal = factory_or_503()
+        if factory is None:
+            return refusal
+        return jsonify({"projects": factory.snapshot()})
+
+    @app.post("/projects")
+    def create_project() -> Any:
+        factory, refusal = factory_or_503()
+        if factory is None:
+            return refusal
+        body = request.get_json(silent=True) or {}
+        missing = [k for k in ("name", "rig", "workflow_id", "roster") if not body.get(k)]
+        if missing:
+            return jsonify({"error": f"missing: {', '.join(missing)}"}), 400
+        try:
+            project = factory.register(name=body["name"], rig=body["rig"],
+                                       workflow_id=body["workflow_id"], roster=body["roster"])
+        except fr.RosterError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(project.to_doc()), 201
+
+    @app.post("/projects/<name>/restart")
+    def restart_project(name: str) -> Any:
+        factory, refusal = factory_or_503()
+        if factory is None:
+            return refusal
+        body = request.get_json(silent=True) or {}
+        if not body.get("workflow_id"):
+            return jsonify({"error": "missing: workflow_id"}), 400
+        try:
+            project = factory.restart(name, workflow_id=body["workflow_id"])
+        except KeyError:
+            return jsonify({"error": f"no project named {name!r}"}), 404
+        return jsonify(project.to_doc()), 200
 
     return app
 
@@ -660,10 +891,15 @@ def main() -> int:
     threading.Thread(target=bridge.reconcile_registration, daemon=True,
                      name="reconcile-registration").start()
 
-    for user in cfg.users:
-        threading.Thread(target=bridge.poll, args=(user,), daemon=True,
-                         name=f"poll-{user}").start()
-        log.info("polling Telegram as %s", user)
+    for users in bridge.polling_groups():
+        threading.Thread(target=bridge.poll, args=(users,), daemon=True,
+                         name=f"poll-{'+'.join(users)}").start()
+        log.info("polling Telegram for %s", ", ".join(users))
+
+    if bridge.factory is not None:
+        threading.Thread(target=bridge.follow_events, daemon=True, name="events").start()
+        log.info("factory routing on: %d project(s) in %s",
+                 len(bridge.factory.projects), cfg.project_state_dir)
 
     app = create_app(bridge)
     log.info("callback listener on port %d (registered as %s)", cfg.listen_port, cfg.callback_url)
