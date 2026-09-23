@@ -10,6 +10,11 @@
 # drives the graph. Nothing in this pack decides what a project needs — the
 # agents decide from the brief, the checklist, and what the humans answer.
 #
+# Each agents/<name>/prompt.template.md is picked up by convention. Do not set
+# prompt_template in an agent.toml: an explicit value resolves against the pack
+# root, not the agent's directory, and gc prime silently falls back to its
+# generic worker prompt when the file is not there.
+#
 # Humans take part through the Telegram bridge (bot/bridge.py). Agents reach
 # them with scripts/reply.sh, and every question and approval is routed by the
 # project's roster.json, never by anything in this pack.
