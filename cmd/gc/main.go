@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1535,12 +1536,55 @@ func openExistingScopeLocalFileStore(scopeRoot string) (*beads.FileStore, error)
 func openCompatibleFileStore(scopeRoot, cityPath string) (*beads.FileStore, error) {
 	scopeRoot = resolveStoreScopeRoot(cityPath, scopeRoot)
 	if !samePath(scopeRoot, cityPath) && scopeUsesFileStoreContract(scopeRoot) {
-		return openExistingScopeLocalFileStore(scopeRoot)
+		return openRigScopeLocalFileStore(scopeRoot)
 	}
 	if fileStoreUsesScopedRoots(cityPath) {
-		return openExistingScopeLocalFileStore(scopeRoot)
+		if samePath(scopeRoot, cityPath) {
+			return openExistingScopeLocalFileStore(scopeRoot)
+		}
+		return openRigScopeLocalFileStore(scopeRoot)
 	}
 	return openScopeLocalFileStore(cityPath)
+}
+
+// openRigScopeLocalFileStore opens a rig's scope-local file store and pins its
+// id prefix to the one the rig's routes.jsonl advertises for itself. The file
+// store otherwise mints under the city-wide default, so a rig bead and a city
+// bead could share an id and every by-id resolver (API, hook, sling) would
+// read the wrong one. A rig with no routes yet keeps the default.
+func openRigScopeLocalFileStore(scopeRoot string) (*beads.FileStore, error) {
+	store, err := openExistingScopeLocalFileStore(scopeRoot)
+	if err != nil {
+		return nil, err
+	}
+	if prefix := readScopeRoutedPrefix(scopeRoot); prefix != "" {
+		store.IDPrefix = prefix
+	}
+	return store, nil
+}
+
+// readScopeRoutedPrefix returns the prefix the scope's own routes.jsonl maps
+// to "." — the prefix `gc rig add` assigned this scope — or "" when the file
+// is absent or names no self entry.
+func readScopeRoutedPrefix(scopeRoot string) string {
+	data, err := os.ReadFile(filepath.Join(scopeRoot, ".beads", "routes.jsonl"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var entry routeEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if filepath.Clean(entry.Path) == "." {
+			return strings.TrimSpace(entry.Prefix)
+		}
+	}
+	return ""
 }
 
 func openStoreAtForCity(storePath, cityPath string) (beads.Store, error) {

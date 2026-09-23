@@ -1,0 +1,7 @@
+description = "Turns a project brief into a requirements document and wireframe, asking the people who own the requirements only what the brief leaves open."
+scope = "rig"
+# Discovery is the step with the most judgment: deciding what is a fact to look
+# up and what is a decision to put to a person, and recommending an answer for
+# each. It is the first agent to move to a stronger model once one is
+# affordable; see the model notes in city/city.toml.
+option_defaults = { model = "composer-2.5" }

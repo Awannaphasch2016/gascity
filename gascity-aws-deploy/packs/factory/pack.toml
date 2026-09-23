@@ -1,0 +1,49 @@
+# The website factory pack.
+#
+# Installed on a rig with:
+#
+#   gc rig add /opt/gascity/projects/<name> --name <name> --include /opt/gascity/packs/factory
+#
+# which stamps every agent below as <name>/factory.<agent>. One rig is one
+# project. The pipeline itself is formulas/website-factory.toml; each step
+# names the agent that runs it through gc.run_target, and the orchestrator
+# drives the graph. Nothing in this pack decides what a project needs — the
+# agents decide from the brief, the checklist, and what the humans answer.
+#
+# Each agents/<name>/prompt.template.md is picked up by convention. Do not set
+# prompt_template in an agent.toml: an explicit value resolves against the pack
+# root, not the agent's directory, and gc prime silently falls back to its
+# generic worker prompt when the file is not there.
+#
+# Humans take part through the Telegram bridge (bot/bridge.py). Agents reach
+# them with scripts/reply.sh, and every question and approval is routed by the
+# project's roster.json, never by anything in this pack.
+[pack]
+name = "factory"
+schema = 2
+description = "Website factory: requirement discovery, implementation, testing, review, and delivery, with humans in the loop over Telegram."
+
+# on_demand: a session is started when a step is routed to the agent and is
+# reclaimed when it goes idle. An answer from a human arriving later cold-wakes
+# the agent through the conversation binding, so nothing depends on the
+# session that asked still being alive. Every prompt therefore tells its agent
+# to re-read the project's docs/ before acting; the documents are the memory.
+[[named_session]]
+template = "discoverer"
+scope = "rig"
+mode = "on_demand"
+
+[[named_session]]
+template = "builder"
+scope = "rig"
+mode = "on_demand"
+
+[[named_session]]
+template = "tester"
+scope = "rig"
+mode = "on_demand"
+
+[[named_session]]
+template = "deliverer"
+scope = "rig"
+mode = "on_demand"

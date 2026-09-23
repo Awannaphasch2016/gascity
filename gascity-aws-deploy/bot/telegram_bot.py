@@ -161,9 +161,22 @@ def get_username_from_telegram_id(telegram_id: int) -> Optional[str]:
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = json.loads(query.data)
-    action = data["action"]
-    approval_id = data.get("approval_id")
+    data = query.data
+    
+    # Parse shortened callback data (format: "a:123" or "r:123")
+    if ':' in data:
+        action_code, approval_id = data.split(':', 1)
+        action = "approve" if action_code == 'a' else "reject"
+    else:
+        # Fallback for old JSON format
+        try:
+            parsed = json.loads(data)
+            action = parsed["action"]
+            approval_id = parsed.get("approval_id")
+        except:
+            await query.edit_message_text("❌ Invalid button data")
+            return
+    
     username = get_username_from_telegram_id(update.effective_user.id)
     
     if not username:
@@ -252,7 +265,7 @@ def send_approval_request_sync(telegram_id: int, message_data: dict):
                 meta = router.get_responsibility_metadata(responsibility)
                 requires_multiple, required_count = router.requires_multiple_approvals(responsibility)
                 
-                approval_id = f"{responsibility}_{datetime.now().timestamp()}"
+                approval_id = f"{int(datetime.now().timestamp())}"  # Shorter ID
                 active_approvals[approval_id] = {
                     "responsibility": responsibility,
                     "title": title,
@@ -264,10 +277,11 @@ def send_approval_request_sync(telegram_id: int, message_data: dict):
                     "conversation_id": f"telegram-approval-{approval_id}"
                 }
                 
+                # Shorter callback data (Telegram limit is 64 bytes)
                 keyboard = {
                     "inline_keyboard": [[
-                        {"text": "✅ Approve", "callback_data": json.dumps({"action": "approve", "approval_id": approval_id})},
-                        {"text": "❌ Deny", "callback_data": json.dumps({"action": "reject", "approval_id": approval_id})}
+                        {"text": "✅ Approve", "callback_data": f"a:{approval_id}"},  # Shorter format
+                        {"text": "❌ Deny", "callback_data": f"r:{approval_id}"}
                     ]]
                 }
                 
