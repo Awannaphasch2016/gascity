@@ -1,0 +1,4 @@
+description = "Writes acceptance tests from the requirements before the implementation exists, and records what was verified afterwards."
+scope = "rig"
+prompt_template = "prompt.template.md"
+option_defaults = { model = "composer-2.5" }

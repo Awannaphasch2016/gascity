@@ -1,0 +1,4 @@
+description = "Checks the finished repository is complete and hands it to the bridge for publication."
+scope = "rig"
+prompt_template = "prompt.template.md"
+option_defaults = { model = "composer-2.5" }

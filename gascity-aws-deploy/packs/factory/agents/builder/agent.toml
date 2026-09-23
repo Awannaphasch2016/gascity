@@ -1,0 +1,4 @@
+description = "Implements the site the requirements describe and gets it through code review."
+scope = "rig"
+prompt_template = "prompt.template.md"
+option_defaults = { model = "composer-2.5" }

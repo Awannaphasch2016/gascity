@@ -1,0 +1,106 @@
+# The website factory pipeline.
+#
+# One run of this formula takes a project from a brief to a delivered
+# repository. Each step names the agent that works it; the orchestrator
+# creates the step beads, routes each to its agent when its dependencies
+# close, and finalizes the workflow when the last one does. There is no
+# blocking gate between phases: when discovery closes, implementation and
+# test-writing start at once. Humans are consulted inside steps — questions
+# during discovery, code review before delivery — through the Telegram
+# bridge, and the step stays open until they have answered.
+#
+# Started per project with:
+#
+#   gc sling <project>/factory.discoverer website-factory --formula
+#
+# How an agent finds its step, reads it, and closes it is the same for every
+# step and lives in the agents' prompts; a description here says only what the
+# step must produce.
+formula = "website-factory"
+description = "Take a website project from brief to delivered repository, with humans answering questions and reviewing code along the way."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "discover"
+title = "Discover the requirements"
+description = """
+Turn docs/brief.md into docs/requirements.md and docs/wireframe.html.
+
+Read the brief and the checklist at $FACTORY_HOME/checklists/website.md. Settle
+every item you can from the brief itself; find facts yourself where they can be
+found. Where the brief leaves a decision open, ask the people who hold the
+`requirements` responsibility, in rounds, with a recommended answer on each
+question. Record every question and answer in docs/discovery-log.md as you go.
+
+Done when docs/requirements.md follows $FACTORY_HOME/templates/requirements.md
+with no open item left, docs/wireframe.html sketches every screen it names, and
+both are committed.
+"""
+metadata = { "gc.run_target" = "factory.discoverer" }
+
+[[steps]]
+id = "write-tests"
+title = "Write the acceptance tests"
+needs = ["discover"]
+description = """
+Turn docs/requirements.md into executable acceptance tests before the
+implementation exists.
+
+Each requirement gets at least one test that fails now and will pass once the
+requirement is met. Tests go under tests/; `npm test` runs them. Commit them.
+Do not touch src/.
+"""
+metadata = { "gc.run_target" = "factory.tester" }
+
+[[steps]]
+id = "implement"
+title = "Implement the site"
+needs = ["discover"]
+description = """
+Build what docs/requirements.md describes, in TypeScript, under src/.
+
+Follow the wireframe. Keep the stack to what the requirements name and nothing
+speculative. `npm run build` and `npm start` must work from a clean checkout.
+Commit as you go; the last commit leaves the tree clean.
+"""
+metadata = { "gc.run_target" = "factory.builder" }
+
+[[steps]]
+id = "review"
+title = "Get the implementation reviewed"
+needs = ["implement", "write-tests"]
+description = """
+Run the acceptance tests against the implementation and fix what fails, then
+put the result in front of the people who hold `code_review`.
+
+Send one APPROVAL_NEEDED for `code_review` describing what was built, what the
+tests cover, and how to run it. If it is rejected, read the reason, fix, and ask
+again. Done when an approval has arrived for the current tree.
+"""
+metadata = { "gc.run_target" = "factory.builder" }
+
+[[steps]]
+id = "verification-doc"
+title = "Write the verification record"
+needs = ["review"]
+description = """
+Write docs/verification.md following $FACTORY_HOME/templates/verification.md:
+what was run, against which commit, what passed, what was found and fixed, and
+what was left out and why. Commit it.
+"""
+metadata = { "gc.run_target" = "factory.tester" }
+
+[[steps]]
+id = "deliver"
+title = "Deliver the repository"
+needs = ["verification-doc"]
+description = """
+Hand the finished repository over.
+
+Confirm the tree is clean and every document under docs/ is committed, then
+send one DELIVER line so the bridge publishes the repository. Report the
+resulting URL, or the reason delivery is not configured, to the project.
+"""
+metadata = { "gc.run_target" = "factory.deliverer" }
