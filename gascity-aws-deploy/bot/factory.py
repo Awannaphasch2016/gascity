@@ -39,7 +39,8 @@ import requests
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
 FORMULA = "website-factory"
-FIRST_AGENT = "factory.discoverer"
+PACK = "factory"
+FIRST_AGENT = f"{PACK}.discoverer"
 
 GITIGNORE = "node_modules/\ndist/\n.env\n"
 
@@ -104,6 +105,22 @@ class Factory:
         if not workflow_id:
             raise IntakeError(f"gc sling returned no workflow id: {out.strip()!r}")
         return workflow_id
+
+    def _close_seats(self, rig: str) -> None:
+        """Close the rig's live factory seats so the new run starts on fresh ones.
+
+        Closing the workflow's beads does not end the sessions working them; a
+        seat left running holds the pool slot the new run's first step needs
+        and goes on working a step that no longer exists. The rig's control
+        dispatcher is infrastructure and is not a seat.
+        """
+        listed = json.loads(self._gc("session", "list", "--json", "--state", "active") or "{}")
+        for session in listed.get("sessions", []):
+            if session.get("rig") != rig:
+                continue
+            if not str(session.get("template", "")).startswith(f"{rig}/{PACK}."):
+                continue
+            self._gc("session", "close", session["id"])
 
     # --- new ---
 
@@ -183,6 +200,7 @@ class Factory:
         if project is None:
             raise IntakeError(f"no project named {name!r} on the bridge")
         self._gc("convoy", "delete", project["workflow_id"], "--force")
+        self._close_seats(project["rig"])
         workflow_id = self._sling(project["rig"])
         return self._tell_bridge("POST", f"/projects/{name}/restart", {"workflow_id": workflow_id},
                                  context=f"project {name} restarted as workflow {workflow_id} but the bridge was not told")

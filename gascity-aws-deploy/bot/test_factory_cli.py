@@ -41,6 +41,13 @@ class FakeRunner:
                                "workflow_id": next(self.workflow_ids), "routed": True, "queued": False, "dry_run": False})
         if argv[:1] == ["gc"] and "add" in argv:
             return json.dumps({"ok": True, "name": "bakery"})
+        if argv[:1] == ["gc"] and argv[3:5] == ["session", "list"]:
+            return json.dumps({"ok": True, "sessions": [
+                {"id": "gc-490", "rig": "bakery", "template": "bakery/core.control-dispatcher", "state": "active"},
+                {"id": "gc-488", "rig": "bakery", "template": "bakery/factory.discoverer", "state": "active"},
+                {"id": "gc-300", "rig": "florist", "template": "florist/factory.builder", "state": "active"},
+                {"id": "gc-7", "rig": "", "template": "builder", "state": "active"},
+            ]})
         return ""
 
 
@@ -165,7 +172,14 @@ def test_restart_closes_the_old_run_slings_anew_and_rotates_the_rooms(setup):
 
     gc = commands_named(runner, "gc")
     assert gc[0][3:] == ["convoy", "delete", "ba-1", "--force"]
-    assert gc[1][3:] == ["sling", "bakery/factory.discoverer", "website-factory", "--formula", "--json"]
+    # The seats working the old run are closed too; a live seat would otherwise
+    # hold the pool slot the new run's first step needs, and keep working a
+    # step that no longer exists. The rig's control dispatcher and other rigs'
+    # seats are left alone.
+    assert gc[1][3:] == ["session", "list", "--json", "--state", "active"]
+    assert gc[2][3:] == ["session", "close", "gc-488"]
+    assert gc[3][3:] == ["sling", "bakery/factory.discoverer", "website-factory", "--formula", "--json"]
+    assert len(gc) == 4
     assert bridge.calls[-1] == ("POST", "/projects/bakery/restart", {"workflow_id": "ba-40"})
     assert result["workflow_id"] == "ba-40"
 
