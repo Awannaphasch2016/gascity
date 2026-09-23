@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""`bd` for a city that runs on the file-backed bead store.
+
+gc shells out to a `bd` binary from several store paths even when the city's
+beads live in .gc/beads.json: the generated work queries read claimable work
+with `bd ready`, resume a session's own in-progress work with `bd list` and
+`bd query`, and `gc hook --claim` claims with `bd update <id> --claim`,
+re-reads with `bd show`, stamps metadata with `bd update --set-metadata`,
+releases with `bd update --if-assignee ... --status open`, and checks blockers
+with `bd dep list`. This city has no bd binary and no Dolt behind it, so this
+file answers exactly those verbs by talking to the supervisor's HTTP API
+(FACTORY_API, the city base URL), and refuses everything else loudly rather
+than emulating half a ledger.
+
+`ready` is forwarded to `gc ready`, the in-process reader that accepts the
+flags the generated queries use.
+
+Installed at /usr/local/bin/bd by deploy-real-city.sh.
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+REFUSED_EXIT = 64
+USAGE_EXIT = 2
+CAS_PRECONDITION_EXIT = 13  # bd's exit code for a failed --if-* precondition
+API_PAGE_LIMIT = 1000  # the API's maximum page; a city store is far smaller
+
+
+class ShimError(Exception):
+    """A shim-level refusal: bad usage or missing configuration."""
+
+    def __init__(self, message, code=USAGE_EXIT):
+        super().__init__(message)
+        self.code = code
+
+
+class ApiError(Exception):
+    """An HTTP error from the Gas City API."""
+
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def api_base(env):
+    base = (env.get("FACTORY_API") or "").strip()
+    if not base:
+        raise ShimError("bd: FACTORY_API is not set; add it to [workspace.env] in city.toml")
+    return base.rstrip("/")
+
+
+class HttpApi:
+    """The three bead endpoints the shim needs, over urllib."""
+
+    def __init__(self, base):
+        self.base = base.rstrip("/")
+
+    def request(self, method, path, body=None):
+        data = None
+        headers = {"X-GC-Request": "1"}
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        return urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
+
+    def _call(self, method, path, body=None):
+        req = self.request(method, path, body)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace").strip()
+            raise ApiError(exc.code, detail or exc.reason) from None
+        except urllib.error.URLError as exc:
+            raise ApiError(0, "cannot reach %s: %s" % (self.base, exc.reason)) from None
+        return json.loads(raw) if raw else None
+
+    def get_bead(self, bead_id):
+        return self._call("GET", "/bead/%s" % bead_id)
+
+    def update_bead(self, bead_id, body):
+        self._call("POST", "/bead/%s/update" % bead_id, body)
+        return self.get_bead(bead_id)
+
+    def close_bead(self, bead_id):
+        self._call("POST", "/bead/%s/close" % bead_id, {})
+
+    def list_beads(self, params):
+        query = urllib.parse.urlencode({**params, "limit": API_PAGE_LIMIT})
+        body = self._call("GET", "/beads?" + query)
+        return list((body or {}).get("items") or [])
+
+
+def exec_gc(binary, argv):
+    os.execvp(binary, [binary] + argv)
+
+
+def emit(stdout, value):
+    stdout.write(json.dumps(value))
+    stdout.write("\n")
+
+
+def split_flags(args, valued, boolean):
+    """Separate positionals from flags. Valued flags may repeat."""
+    positionals, flags = [], {}
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("--") and "=" in arg:
+            name, value = arg.split("=", 1)
+            if name in valued:
+                flags.setdefault(name, []).append(value)
+                i += 1
+                continue
+        if arg in valued:
+            if i + 1 >= len(args):
+                raise ShimError("bd: %s needs a value" % arg)
+            flags.setdefault(arg, []).append(args[i + 1])
+            i += 2
+            continue
+        if arg in boolean:
+            flags[arg] = True
+            i += 1
+            continue
+        if arg.startswith("--"):
+            raise ShimError("bd: unknown flag %s" % arg)
+        positionals.append(arg)
+        i += 1
+    return positionals, flags
+
+
+def cmd_show(args, api, stdout):
+    positionals, _ = split_flags(args, valued=set(), boolean={"--json"})
+    if len(positionals) != 1:
+        raise ShimError("bd: usage: bd show --json <id>")
+    emit(stdout, [api.get_bead(positionals[0])])
+    return 0
+
+
+UPDATE_VALUED = {
+    "--status", "--assignee", "--title", "--description", "--parent", "--priority",
+    "--type", "--set-metadata", "--add-label", "--remove-label", "--if-assignee", "--if-status",
+}
+UPDATE_BOOLEAN = {"--json", "--claim"}
+
+
+def update_body(flags):
+    body = {}
+    single = {
+        "--status": "status", "--assignee": "assignee", "--title": "title",
+        "--description": "description", "--parent": "parent", "--type": "type",
+    }
+    for flag, key in single.items():
+        if flag in flags:
+            body[key] = flags[flag][-1]
+    if "--priority" in flags:
+        body["priority"] = int(flags["--priority"][-1])
+    if "--set-metadata" in flags:
+        metadata = {}
+        for entry in flags["--set-metadata"]:
+            if "=" not in entry:
+                raise ShimError("bd: --set-metadata expects key=value, got %r" % entry)
+            key, value = entry.split("=", 1)
+            metadata[key] = value
+        body["metadata"] = metadata
+    if "--add-label" in flags:
+        body["labels"] = list(flags["--add-label"])
+    if "--remove-label" in flags:
+        body["remove_labels"] = list(flags["--remove-label"])
+    return body
+
+
+def claim(bead_id, api, env, stderr):
+    actor = (env.get("BEADS_ACTOR") or "").strip()
+    if not actor:
+        raise ShimError("bd: --claim needs BEADS_ACTOR in the environment")
+    current = api.get_bead(bead_id)
+    if current.get("status") == "closed":
+        stderr.write("bd: %s is closed and cannot be claimed\n" % bead_id)
+        return 1, None
+    holder = (current.get("assignee") or "").strip()
+    if holder and holder != actor:
+        stderr.write("bd: %s already claimed by %s\n" % (bead_id, holder))
+        return 1, None
+    return 0, api.update_bead(bead_id, {"status": "in_progress", "assignee": actor})
+
+
+def cmd_update(args, api, env, stdout, stderr):
+    positionals, flags = split_flags(args, UPDATE_VALUED, UPDATE_BOOLEAN)
+    if not positionals:
+        raise ShimError("bd: usage: bd update <id>... [flags]")
+    if flags.get("--claim"):
+        if len(positionals) != 1:
+            raise ShimError("bd: --claim takes exactly one id")
+        code, claimed = claim(positionals[0], api, env, stderr)
+        if code == 0:
+            emit(stdout, claimed)
+        return code
+    body = update_body(flags)
+    if not body:
+        raise ShimError("bd: nothing to update")
+    results = []
+    for bead_id in positionals:
+        if "--if-assignee" in flags or "--if-status" in flags:
+            current = api.get_bead(bead_id)
+            want_assignee = flags.get("--if-assignee", [None])[-1]
+            want_status = flags.get("--if-status", [None])[-1]
+            if want_assignee is not None and (current.get("assignee") or "") != want_assignee:
+                stderr.write("bd: %s precondition failed: assignee is %r\n" % (bead_id, current.get("assignee") or ""))
+                return CAS_PRECONDITION_EXIT
+            if want_status is not None and current.get("status") != want_status:
+                stderr.write("bd: %s precondition failed: status is %r\n" % (bead_id, current.get("status")))
+                return CAS_PRECONDITION_EXIT
+        results.append(api.update_bead(bead_id, body))
+    if flags.get("--json"):
+        emit(stdout, results[0] if len(results) == 1 else results)
+    return 0
+
+
+def cmd_close(args, api, stdout):
+    positionals, flags = split_flags(args, valued={"--reason"}, boolean={"--json", "--force"})
+    if not positionals:
+        raise ShimError("bd: usage: bd close --force --json [--reason r] <id>...")
+    reason = flags.get("--reason", [""])[-1].strip()
+    closed = []
+    for bead_id in positionals:
+        if reason:
+            api.update_bead(bead_id, {"metadata": {"close_reason": reason}})
+        api.close_bead(bead_id)
+        closed.append(api.get_bead(bead_id))
+    if flags.get("--json"):
+        emit(stdout, closed)
+    return 0
+
+
+def scope_params(env):
+    """The rig this bd invocation is scoped to, as API query parameters.
+
+    gc runs bd with the rig's BEADS_DIR and GC_RIG; a city-scoped call has no
+    GC_RIG and reads the whole city, which is what the federated readers want.
+    """
+    rig = (env.get("GC_RIG") or "").strip()
+    return {"rig": rig} if rig else {}
+
+
+LIST_VALUED = {"--status", "--assignee", "--type", "--label", "--limit"}
+LIST_BOOLEAN = {"--json", "--all"}
+
+
+def apply_limit(items, flags):
+    limit = int(flags.get("--limit", ["0"])[-1])
+    return items[:limit] if limit > 0 else items
+
+
+def cmd_list(args, api, env, stdout):
+    positionals, flags = split_flags(args, LIST_VALUED, LIST_BOOLEAN)
+    if positionals:
+        raise ShimError("bd: list takes no positional arguments")
+    params = scope_params(env)
+    for flag, key in (("--status", "status"), ("--assignee", "assignee"), ("--type", "type"), ("--label", "label")):
+        if flag in flags:
+            params[key] = flags[flag][-1]
+    if flags.get("--all") or params.get("status"):
+        params["all"] = "true"
+    emit(stdout, apply_limit(api.list_beads(params), flags))
+    return 0
+
+
+QUERY_KEYS = {"status", "assignee", "ephemeral", "id", "issue_type", "type"}
+
+
+def parse_query(clause):
+    """Parse bd's `key=value AND key=value` clause into a filter dict."""
+    filters = {}
+    for term in clause.split(" AND "):
+        term = term.strip()
+        if "=" not in term:
+            raise ShimError("bd: cannot parse query term %r" % term)
+        key, value = (part.strip() for part in term.split("=", 1))
+        if key not in QUERY_KEYS:
+            raise ShimError("bd: query key %r is not served by this shim" % key)
+        filters["issue_type" if key == "type" else key] = value.strip("'\"")
+    return filters
+
+
+def matches_query(bead, filters):
+    for key, want in filters.items():
+        if key == "ephemeral":
+            if bool(bead.get("ephemeral")) != (want.lower() == "true"):
+                return False
+        elif (bead.get(key) or "") != want:
+            return False
+    return True
+
+
+def cmd_query(args, api, env, stdout):
+    positionals, flags = split_flags(args, valued={"--limit"}, boolean={"--json", "--all"})
+    if len(positionals) != 1:
+        raise ShimError("bd: usage: bd query --json '<clause>'")
+    filters = parse_query(positionals[0])
+    params = {**scope_params(env), "all": "true"}
+    if "status" in filters:
+        params["status"] = filters["status"]
+    items = [b for b in api.list_beads(params) if matches_query(b, filters)]
+    emit(stdout, apply_limit(items, flags))
+    return 0
+
+
+def cmd_dep_list(args, api, stdout):
+    positionals, flags = split_flags(args, valued={"--direction"}, boolean={"--json"})
+    if len(positionals) != 1:
+        raise ShimError("bd: usage: bd dep list <id> --json [--direction=up]")
+    bead_id = positionals[0]
+    direction = flags.get("--direction", ["down"])[-1]
+    bead = api.get_bead(bead_id)
+    out = []
+    for dep in bead.get("dependencies") or []:
+        if direction == "up":
+            other = dep.get("issue_id") if dep.get("depends_on_id") == bead_id else None
+        else:
+            other = dep.get("depends_on_id") if dep.get("issue_id") == bead_id else None
+        if not other:
+            continue
+        entry = api.get_bead(other)
+        entry["dependency_type"] = dep.get("type") or "blocks"
+        out.append(entry)
+    emit(stdout, out)
+    return 0
+
+
+def main(argv, api, env, stdout, stderr):
+    verb = argv[0] if argv else ""
+    rest = argv[1:]
+    try:
+        if verb == "ready":
+            exec_gc(env.get("GC_BIN") or "gc", ["ready"] + rest)
+            return 0
+        if verb == "show":
+            return cmd_show(rest, api, stdout)
+        if verb == "update":
+            return cmd_update(rest, api, env, stdout, stderr)
+        if verb == "close":
+            return cmd_close(rest, api, stdout)
+        if verb == "list":
+            return cmd_list(rest, api, env, stdout)
+        if verb == "query":
+            return cmd_query(rest, api, env, stdout)
+        if verb == "dep" and rest[:1] == ["list"]:
+            return cmd_dep_list(rest[1:], api, stdout)
+    except ApiError as exc:
+        if exc.status == 404:
+            # gc's isBdNotFound matches on this phrase.
+            stderr.write("bd: not found: %s\n" % exc)
+        else:
+            stderr.write("bd: api error %s: %s\n" % (exc.status, exc))
+        return 1
+    except ShimError as exc:
+        stderr.write("%s\n" % exc)
+        return exc.code
+    stderr.write(
+        "bd: this city runs on the file bead store; only ready/show/list/query/update/close/dep list "
+        "are served here (got: bd %s).\n" % " ".join(argv)
+    )
+    stderr.write('bd: read or close a step with "$FACTORY_HOME/scripts/step.sh".\n')
+    return REFUSED_EXIT
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args[:1] == ["ready"]:
+        exec_gc(os.environ.get("GC_BIN") or "gc", args)
+    try:
+        client = HttpApi(api_base(os.environ))
+    except ShimError as exc:
+        sys.stderr.write("%s\n" % exc)
+        sys.exit(exc.code)
+    sys.exit(main(args, client, os.environ, sys.stdout, sys.stderr))
