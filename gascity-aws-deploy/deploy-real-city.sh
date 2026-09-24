@@ -206,6 +206,10 @@ PROJECT_STATE_DIR=${REMOTE}/state/projects
 # only the bridge reads, so an agent cannot publish on its own.
 FACTORY_PROJECTS_DIR=${REMOTE}/projects
 ${GITHUB_TOKEN:+GITHUB_TOKEN=${GITHUB_TOKEN}}
+# Team Admin API key (Cursor Dashboard → API Keys). Enables automatic Bugbot
+# reviews on pull requests for each repo this bridge publishes. Not the agent
+# CURSOR_API_KEY, and not read by the controller.
+${CURSOR_BUGBOT_API_KEY:+CURSOR_BUGBOT_API_KEY=${CURSOR_BUGBOT_API_KEY}}
 ENV_FILE
 "${SSH[@]}" "chmod 600 ${REMOTE}/controller.env ${REMOTE}/bridge.env"
 

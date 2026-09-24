@@ -5,12 +5,19 @@ repository with the token and pushes the project's commits. The token is sent
 as a one-shot HTTP header for that push, so it is never written into the
 project's git config and never appears on the git command line — both of
 which the agents can read.
+
+When CURSOR_BUGBOT_API_KEY is set, a successful publish also stores Bugbot's
+repository setting: enabled, and not manual-only. That call is configuration.
+Cursor then reviews pull requests on its own when one is opened and when new
+commits land on it. Creating a GitHub issue does not start a review, and this
+module does not call the separate "review this PR now" endpoint.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import subprocess
 import urllib.error
@@ -18,6 +25,9 @@ import urllib.request
 from typing import Any, Callable
 
 API = "https://api.github.com"
+BUGBOT_API = "https://api.cursor.com"
+
+log = logging.getLogger("github_delivery")
 
 
 class DeliveryError(Exception):
@@ -31,17 +41,25 @@ Run = Callable[[list[str], dict], subprocess.CompletedProcess]
 class GitHubDelivery:
     """Create a repository under the token's account and push a project to it."""
 
-    def __init__(self, token: str, projects_dir: str, api: Api | None = None, run: Run | None = None) -> None:
+    def __init__(
+        self, token: str, projects_dir: str, api: Api | None = None, run: Run | None = None,
+        cursor_api_key: str = "", bugbot: Api | None = None,
+    ) -> None:
         self.token = token
         self.projects_dir = projects_dir
+        self.cursor_api_key = cursor_api_key
         self._api = api or self._request
+        self._bugbot = bugbot or self._bugbot_request
         self._run = run or _run_git
         self._login: str | None = None
 
     def publish(self, name: str, visibility: str) -> str:
-        """Create or reuse the repository and push HEAD to its main branch.
+        """Create or reuse the repository, push HEAD to main, and enable Bugbot.
 
-        Returns the repository's HTML URL.
+        Returns the repository's HTML URL. Bugbot is configured only after the
+        push succeeds, and only when an admin API key was supplied. The setting
+        persists on Cursor's side; repeating it on a later publish is the same
+        configuration, not another review.
         """
         if visibility not in ("private", "public"):
             raise DeliveryError(f"visibility must be private or public, got {visibility!r}")
@@ -51,6 +69,7 @@ class GitHubDelivery:
         repo = self._create(name, private=visibility == "private")
         url = repo["html_url"]
         self._push(project_dir, repo["full_name"])
+        self._enable_bugbot(url)
         return url
 
     def _create(self, name: str, private: bool) -> dict:
@@ -82,8 +101,24 @@ class GitHubDelivery:
         argv = ["git", "-C", project_dir, "push", f"https://github.com/{full_name}.git", "HEAD:main"]
         result = self._run(argv, env)
         if result.returncode != 0:
-            detail = _redact(result.stderr or result.stdout or "no output", self.token)
+            detail = _redact(result.stderr or result.stdout or "no output", self.token, self.cursor_api_key)
             raise DeliveryError(f"git push failed: {detail}")
+
+    def _enable_bugbot(self, repo_url: str) -> None:
+        if not self.cursor_api_key:
+            log.info("bugbot provisioning skipped: CURSOR_BUGBOT_API_KEY unset")
+            return
+        status, body = self._bugbot("POST", "/bugbot/repo/update", {
+            "repoUrl": repo_url,
+            "enabled": True,
+            "manualTriggerOnly": False,
+        })
+        if status < 200 or status >= 300:
+            detail = _redact(_message(body), self.token, self.cursor_api_key)
+            raise DeliveryError(
+                f"repository published at {repo_url}, but Bugbot could not be enabled: {status} {detail}"
+            )
+        log.info("bugbot automatic reviews enabled for %s", repo_url)
 
     def _request(self, method: str, path: str, body: dict | None) -> tuple[int, dict]:
         data = json.dumps(body).encode() if body is not None else None
@@ -108,6 +143,29 @@ class GitHubDelivery:
                 parsed = {"message": raw[:300]}
             return exc.code, parsed if isinstance(parsed, dict) else {"message": str(parsed)}
 
+    def _bugbot_request(self, method: str, path: str, body: dict | None) -> tuple[int, dict]:
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(
+            BUGBOT_API + path, data=data, method=method,
+            headers={
+                "Authorization": f"Bearer {self.cursor_api_key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "gascity-factory",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                parsed = json.load(response)
+                return response.status, parsed if isinstance(parsed, dict) else {"message": str(parsed)}
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode(errors="replace")
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                parsed = {"message": raw[:300]}
+            return exc.code, parsed if isinstance(parsed, dict) else {"message": str(parsed)}
+
 
 def _run_git(argv: list[str], env: dict) -> subprocess.CompletedProcess:
     return subprocess.run(argv, env=env, capture_output=True, text=True, check=False)
@@ -122,6 +180,9 @@ def _message(body: dict) -> str:
     return str(body.get("message") or body)[:300]
 
 
-def _redact(text: str, token: str) -> str:
-    cleaned = text.replace(token, "[token]") if token else text
+def _redact(text: str, *secrets: str) -> str:
+    cleaned = text
+    for secret in secrets:
+        if secret:
+            cleaned = cleaned.replace(secret, "[token]")
     return " ".join(cleaned.split())[:500]

@@ -89,8 +89,14 @@ def github_delivery_from_env() -> gd.GitHubDelivery | None:
         log.info("github delivery off: %s",
                  "GITHUB_TOKEN unset" if not token else "FACTORY_PROJECTS_DIR unset")
         return None
-    log.info("github delivery on: projects in %s", projects_dir)
-    return gd.GitHubDelivery(token, projects_dir)
+    # Team admin key for POST /bugbot/repo/update. It stays in the bridge
+    # environment, next to the GitHub token, because it provisions the
+    # repository rather than authenticating an agent. Unset leaves delivery
+    # working and skips the Bugbot setting.
+    cursor_api_key = os.getenv("CURSOR_BUGBOT_API_KEY", "").strip()
+    log.info("github delivery on: projects in %s; bugbot %s",
+             projects_dir, "on" if cursor_api_key else "off")
+    return gd.GitHubDelivery(token, projects_dir, cursor_api_key=cursor_api_key)
 
 
 def esc(text: str) -> str:
