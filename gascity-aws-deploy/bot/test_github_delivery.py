@@ -106,3 +106,133 @@ def test_a_failed_push_is_reported_without_the_token(tmp_path):
     with pytest.raises(gd.DeliveryError, match="git push failed") as raised:
         delivery.publish("bakery", "private")
     assert "ghp_secret" not in str(raised.value)
+
+
+class FakeBugbot:
+    def __init__(self, status: int = 200, body: dict | None = None) -> None:
+        self.status = status
+        self.body = body if body is not None else {"enabled": True, "manualTriggerOnly": False}
+        self.calls: list[tuple[str, str, dict | None]] = []
+
+    def __call__(self, method: str, path: str, body: dict | None) -> tuple[int, dict]:
+        self.calls.append((method, path, body))
+        return self.status, self.body
+
+
+def test_publish_enables_automatic_bugbot_reviews_once_the_repo_exists(tmp_path):
+    api, run, bugbot = FakeAPI(), FakeRun(), FakeBugbot()
+    delivery = gd.GitHubDelivery(
+        token="ghp_secret", projects_dir=str(tmp_path), api=api, run=run,
+        cursor_api_key="cursor_admin_secret", bugbot=bugbot,
+    )
+    repo(tmp_path)
+
+    url = delivery.publish("bakery", "private")
+
+    assert url == "https://github.com/you/bakery"
+    assert run.calls, "the push has to finish before Bugbot is configured"
+    assert bugbot.calls == [(
+        "POST", "/bugbot/repo/update",
+        {
+            "repoUrl": "https://github.com/you/bakery",
+            "enabled": True,
+            "manualTriggerOnly": False,
+        },
+    )]
+
+
+def test_publish_leaves_bugbot_alone_when_no_admin_key_is_configured(tmp_path):
+    bugbot = FakeBugbot()
+    delivery = gd.GitHubDelivery(
+        token="ghp_secret", projects_dir=str(tmp_path), api=FakeAPI(), run=FakeRun(), bugbot=bugbot,
+    )
+    repo(tmp_path)
+
+    assert delivery.publish("bakery", "private") == "https://github.com/you/bakery"
+    assert bugbot.calls == []
+
+
+def test_a_failed_push_does_not_configure_bugbot(tmp_path):
+    bugbot = FakeBugbot()
+    delivery = gd.GitHubDelivery(
+        token="ghp_secret", projects_dir=str(tmp_path), api=FakeAPI(),
+        run=FakeRun(code=1, stderr="rejected"),
+        cursor_api_key="cursor_admin_secret", bugbot=bugbot,
+    )
+    repo(tmp_path)
+    with pytest.raises(gd.DeliveryError, match="git push failed"):
+        delivery.publish("bakery", "private")
+    assert bugbot.calls == []
+
+
+def test_a_failed_bugbot_update_names_the_published_repo_and_hides_both_secrets(tmp_path):
+    bugbot = FakeBugbot(status=403, body={"message": "rejected cursor_admin_secret and ghp_secret"})
+    delivery = gd.GitHubDelivery(
+        token="ghp_secret", projects_dir=str(tmp_path), api=FakeAPI(), run=FakeRun(),
+        cursor_api_key="cursor_admin_secret", bugbot=bugbot,
+    )
+    repo(tmp_path)
+    with pytest.raises(gd.DeliveryError, match="Bugbot") as raised:
+        delivery.publish("bakery", "private")
+    text = str(raised.value)
+    assert "https://github.com/you/bakery" in text
+    assert "cursor_admin_secret" not in text
+    assert "ghp_secret" not in text
+
+
+def test_the_bridge_passes_the_bugbot_admin_key_through_from_its_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    monkeypatch.setenv("FACTORY_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setenv("CURSOR_BUGBOT_API_KEY", "cursor_admin_secret")
+    import bridge
+
+    delivery = bridge.github_delivery_from_env()
+
+    assert delivery is not None
+    assert delivery.cursor_api_key == "cursor_admin_secret"
+    assert delivery.token == "ghp_secret"
+
+
+def test_the_bridge_still_publishes_when_the_bugbot_admin_key_is_absent(monkeypatch, tmp_path):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    monkeypatch.setenv("FACTORY_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.delenv("CURSOR_BUGBOT_API_KEY", raising=False)
+    import bridge
+
+    delivery = bridge.github_delivery_from_env()
+
+    assert delivery is not None
+    assert delivery.cursor_api_key == ""
+
+
+def test_the_bugbot_request_sends_the_cursor_admin_key_as_a_bearer(monkeypatch):
+    captured: dict = {}
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return b'{"enabled": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def urlopen(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["auth"] = request.get_header("Authorization")
+        captured["body"] = request.data
+        return Response()
+
+    monkeypatch.setattr(gd.urllib.request, "urlopen", urlopen)
+    delivery = gd.GitHubDelivery(
+        token="ghp_secret", projects_dir="/tmp", cursor_api_key="cursor_admin_secret",
+    )
+    status, body = delivery._bugbot_request("POST", "/bugbot/repo/update", {"repoUrl": "https://github.com/you/bakery"})
+
+    assert status == 200 and body["enabled"] is True
+    assert captured["url"] == "https://api.cursor.com/bugbot/repo/update"
+    assert captured["auth"] == "Bearer cursor_admin_secret"
+    assert "ghp_secret" not in captured["auth"]
