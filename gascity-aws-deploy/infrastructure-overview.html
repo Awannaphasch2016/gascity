@@ -195,8 +195,8 @@
     <h1>Gas City on one public instance</h1>
     <p class="lede">A single Ubuntu machine in the default VPC is the entire factory: API, human approval, and the status page. The package declares a Gas City container. The notes that record the live box describe a Flask stand-in on the same port.</p>
     <div class="meta">
-      <span>Sources: <code>gascity-aws-deploy/</code>, <code>DEPLOY_ALL_IN_ONE.sh</code>, controller and extmsg docs</span>
-      <span>Recorded instance: <span class="mono">13.214.162.41</span> · ap-southeast-1</span>
+      <span>Sources: live <code>DescribeInstances</code> on 25 Sep 2026, plus <code>gascity-aws-deploy/</code></span>
+      <span>Live host: <span class="mono">m7i.xlarge</span> · <span class="mono">13.251.216.187</span> · ap-southeast-1c</span>
       <span>Compiled 25 Sep 2026</span>
     </div>
   </div>
@@ -222,13 +222,13 @@
       <h2>Verdict</h2>
       <p>The deployment is a <strong>one-tenant software factory demo</strong>, not a multi-tenant control plane. Scaling, in the scripts, means launching another copy of the same instance. Isolation is the instance boundary. There is no load balancer, no private subnet, no database service, and no Elastic IP.</p>
       <div class="grid-3">
-        <div class="card"><div class="stat">t3.medium<span>2 vCPU · 4 GiB · 30 GiB gp3</span></div></div>
+        <div class="card"><div class="stat">m7i.xlarge<span>4 vCPU · 16 GiB · 30 GiB gp3</span></div></div>
         <div class="card"><div class="stat">5 ports<span>22, 80, 443, 7375, 8080 open to the internet</span></div></div>
-        <div class="card"><div class="stat">~$33<span>package estimate per instance / month</span></div></div>
+        <div class="card"><div class="stat">~$184<span>on-demand compute in Singapore, before disk</span></div></div>
       </div>
       <div class="callout">
         <strong>How this report was built.</strong>
-        It is reconstructed from the deploy scripts and the notes that describe the running host. It is not a live <span class="mono">DescribeInstances</span> snapshot. The address <span class="mono">13.214.162.41</span> is the public IP written down in <span class="mono">DEPLOYMENT_SUMMARY.md</span> and <span class="mono">FIX_GUIDE.md</span>. The launch scripts do not allocate an Elastic IP, so a stop/start replaces it.
+        The instance identity below is a live read of account EC2 on 25 Sep 2026: every enabled region, then a detail call on <span class="mono">i-0817f3778a5c9e1e2</span>. The process layout later in the page still comes from the deploy package, which was written when the notes said <span class="mono">t3.medium</span> at <span class="mono">13.214.162.41</span>. The launch scripts still default to <span class="mono">t3.medium</span>. They do not allocate an Elastic IP, so a stop/start replaces <span class="mono">13.251.216.187</span>.
       </div>
     </section>
 
@@ -238,8 +238,8 @@
       <div class="diagram" aria-label="AWS layout">
         <svg viewBox="0 0 980 420" role="img">
           <rect x="8" y="8" width="964" height="404" rx="16" fill="#f4efe6" stroke="#cfc6b6"/>
-          <text x="28" y="40" fill="#9a4312" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600" letter-spacing="1.5">AWS ACCOUNT · REGION FROM DOPPLER</text>
-          <text x="28" y="62" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="15">Recorded deployment: ap-southeast-1. Script default if unset: us-east-1.</text>
+          <text x="28" y="40" fill="#9a4312" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600" letter-spacing="1.5">AWS ACCOUNT · LIVE READ 25 SEP 2026</text>
+          <text x="28" y="62" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="15">One m7i in the account. It is this host, in ap-southeast-1. Scripts still default to us-east-1 and t3.medium.</text>
 
           <rect x="28" y="84" width="924" height="308" rx="14" fill="#fffdf8" stroke="#1e3a5f"/>
           <text x="48" y="112" fill="#1e3a5f" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">DEFAULT VPC · PUBLIC ADDRESSING</text>
@@ -257,12 +257,12 @@
           <rect x="330" y="132" width="390" height="230" rx="12" fill="#f4e6d8" stroke="#9a4312"/>
           <text x="348" y="160" fill="#9a4312" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">EC2 · gascity-server</text>
           <text x="348" y="186" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="15">Ubuntu 22.04 Jammy amd64</text>
-          <text x="348" y="208" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">Canonical AMI, newest match</text>
-          <text x="348" y="236" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">t3.medium</text>
-          <text x="348" y="258" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">/dev/sda1 · 30 GiB gp3</text>
-          <text x="348" y="286" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Key pair gascity-key</text>
-          <text x="348" y="314" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">13.214.162.41</text>
-          <text x="348" y="338" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">auto-assigned public IP</text>
+          <text x="348" y="208" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">ami-0d95f2f0cc4ab4566 · 2026-09-04</text>
+          <text x="348" y="236" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">m7i.xlarge · 4 vCPU · 16 GiB</text>
+          <text x="348" y="258" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">/dev/sda1 · 30 GiB gp3 · 3000 IOPS</text>
+          <text x="348" y="286" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Key pair gascity-key · ap-southeast-1c</text>
+          <text x="348" y="314" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">13.251.216.187</text>
+          <text x="348" y="338" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">launched 2026-09-24 21:39 UTC</text>
 
           <rect x="748" y="132" width="180" height="230" rx="12" fill="#faf7f1" stroke="#cfc6b6"/>
           <text x="764" y="160" fill="#5c564c" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">NOT IN THE PLAN</text>
@@ -279,12 +279,13 @@
       <table>
         <thead><tr><th>Resource</th><th>Name / value</th><th>Where it is set</th></tr></thead>
         <tbody>
-          <tr><td>Instance tag</td><td><code>gascity-server</code></td><td><code>deploy.sh</code>, <code>deploy-now.sh</code></td></tr>
-          <tr><td>Instance type</td><td><code>t3.medium</code> unless <code>INSTANCE_TYPE</code> overrides</td><td>Doppler secret or prompt</td></tr>
-          <tr><td>AMI</td><td>Newest <code>ubuntu-jammy-22.04-amd64-server</code>, owner <code>099720109477</code></td><td>Resolved at launch time</td></tr>
-          <tr><td>Volume</td><td>30 GiB gp3 on <code>/dev/sda1</code></td><td>Block-device mapping. Delete-on-termination left at the AWS default.</td></tr>
-          <tr><td>Placement</td><td>Default VPC of the chosen region. No subnet, no AZ pin.</td><td><code>describe-vpcs --filters isDefault=true</code></td></tr>
-          <tr><td>Recorded region</td><td>ap-southeast-1 for the host at <code>13.214.162.41</code></td><td><code>DEPLOYMENT_SUMMARY.md</code>. Scripts fall back to <code>us-east-1</code>.</td></tr>
+          <tr><td>Instance</td><td><code>i-0817f3778a5c9e1e2</code>, tag <code>gascity-server</code></td><td>Live. Tag <code>DesiredInstanceType=m7i.xlarge</code> is set on the instance.</td></tr>
+          <tr><td>Instance type</td><td><code>m7i.xlarge</code> — 4 vCPU, 16 GiB, up to 12.5 Gbit, 3.2 GHz</td><td>Live <code>DescribeInstanceTypes</code>. Launch scripts still default to <code>t3.medium</code> (2 vCPU, 4 GiB).</td></tr>
+          <tr><td>AMI</td><td><code>ami-0d95f2f0cc4ab4566</code>, <code>ubuntu-jammy-22.04-amd64-server-20260904</code>, owner <code>099720109477</code></td><td>Live image id. Scripts ask for the newest Jammy match at launch time.</td></tr>
+          <tr><td>Volume</td><td><code>vol-020a3f0726876b135</code>, 30 GiB gp3, 3000 IOPS, unencrypted, delete on termination</td><td>Live. Device <code>/dev/sda1</code>.</td></tr>
+          <tr><td>Placement</td><td>ap-southeast-1c, subnet <code>subnet-030760a3f13e4eacc</code>, VPC <code>vpc-0fb04b10ef8c3d18b</code></td><td>Live. Private address <code>172.31.14.171</code>. No Elastic IP.</td></tr>
+          <tr><td>Address</td><td><code>13.251.216.187</code> (<code>ec2-13-251-216-187.ap-southeast-1.compute.amazonaws.com</code>)</td><td>Live. The address <code>13.214.162.41</code> in <code>DEPLOYMENT_SUMMARY.md</code> is the earlier host.</td></tr>
+          <tr><td>Account census</td><td>One <code>m7i</code>, this host, state running. One other running instance, a <code>t2.micro</code>. Seven stopped instances, none of them <code>m7i</code>.</td><td>Sweep of 17 enabled regions on 25 Sep 2026.</td></tr>
           <tr><td>Secrets</td><td>Doppler project <code>gascity</code>, config <code>prd</code></td><td><code>deploy.sh</code> mints a 30-day service token into user-data. <code>deploy-now.sh</code> writes bot tokens into <code>/opt/gascity/.env</code> via user-data.</td></tr>
         </tbody>
       </table>
@@ -516,7 +517,7 @@
           <tr><td>Public IP</td><td>Auto-assigned</td><td>Changes on stop/start</td><td>New address</td></tr>
         </tbody>
       </table>
-      <p>Multi-tenant, in the deployment summary, means another <code>t3.medium</code> per tenant at the same estimate. Ten tenants are ten of these machines. Nothing in the security group, the city name, or the Docker network carves tenants inside one host.</p>
+      <p>Multi-tenant, in the deployment summary, means another instance per tenant. At the live size that is another <code>m7i.xlarge</code>. A re-run of the scripts, which still default to <code>t3.medium</code>, would launch the small size instead. Nothing in the security group, the city name, or the Docker network carves tenants inside one host.</p>
     </section>
 
     <section id="trust">
@@ -530,7 +531,7 @@
         <article class="card">
           <h3><span class="pill warn">User-data</span> Secret handling</h3>
           <p><code>deploy.sh</code> embeds a Doppler service token in user-data. <code>deploy-now.sh</code> embeds Telegram bot tokens in the same channel, then writes them to <code>/opt/gascity/.env</code>. User-data remains readable to principals who can describe instance attributes.</p>
-          <p>There is no instance profile. AWS credentials used to launch the box stay on the operator workstation (and in Doppler), which is the right split — and then the guest is handed a long-lived Doppler token anyway.</p>
+          <p>The live instance has no IAM instance profile. Instance metadata tokens are optional, so IMDSv1 is still accepted. AWS credentials used to launch the box stay on the operator workstation (and in Doppler), and the guest can still be handed a long-lived Doppler token through user-data.</p>
         </article>
       </div>
       <p>The compose network is the only private path: bots use <code>http://gascity:7375</code>. Publishing <code>7375:7375</code> punches that path out to the security group. A city process that followed the product default would listen on localhost inside the container; the publish mapping is what makes it a public API.</p>
@@ -560,12 +561,12 @@
           Approval state that matters to a human is a handful of JSON files. City state, if the real process is ever the one on 7375, lives in <code>gascity-data</code> on that same disk. Replacing the instance replaces the factory.
         </li>
         <li>
-          <strong>The instance size matches a demo and not an agent fleet.</strong>
-          <code>t3.medium</code> is 4 GiB for Ubuntu, Docker, two Python pollers, nginx, and — in the declared topology — a tmux-backed Claude session plus the controller. No swap is configured in user-data.
+          <strong>The running host is an <code>m7i.xlarge</code>. The scripts still launch a <code>t3.medium</code>.</strong>
+          Live shape: 4 vCPU, 16 GiB, up to 12.5 Gbit, launched 24 Sep 2026 in ap-southeast-1c. That is enough machine for a controller and a small agent session. It is 4 cores and 16 GiB, which is <code>m7i.xlarge</code>. <code>m7i.large</code> is 2 vCPU and 8 GiB. Eight cores and 16 GiB would be a <code>c7i.2xlarge</code>. Eight cores in the M7i line is <code>m7i.2xlarge</code> at 32 GiB. On-demand Linux in Singapore is $0.252 per hour, about $184 per month before the 30 GiB gp3 disk. The package’s ~$33 figure is the old <code>t3.medium</code> estimate. Re-running <code>deploy.sh</code> without <code>INSTANCE_TYPE</code> would create a new small instance beside this one.
         </li>
         <li>
           <strong>“One city per tenant” is the whole tenancy model.</strong>
-          That is a legitimate isolation boundary. It is not a control plane: no shared identity, no per-tenant network, no central ledger. Cost scales linearly with the package estimate of about $33 per instance plus data transfer.
+          That is a legitimate isolation boundary. It is not a control plane: no shared identity, no per-tenant network, no central ledger. Cost scales with one <code>m7i.xlarge</code> per tenant, about $184 of compute each, plus disk and transfer.
         </li>
         <li>
           <strong>To run Gas City here, the mock has to leave port 7375.</strong>
@@ -577,7 +578,7 @@
 </main>
 <footer class="colophon">
   <div class="wrap">
-    <p>Primary sources: <code>gascity-aws-deploy/docker-compose.yml</code>, <code>deploy.sh</code>, <code>deploy-now.sh</code>, <code>DEPLOYMENT_SUMMARY.md</code>, <code>FIX_GUIDE.md</code>, <code>simple_gc_api_fixed.py</code>, <code>bot/telegram_bot.py</code>, <code>gascity/city.toml</code>, <code>config/responsibilities.json</code>, <code>miniapp/index.html</code>, <code>DEPLOY_ALL_IN_ONE.sh</code>, <code>engdocs/architecture/controller.md</code>, <code>docs/guides/connected-clients.md</code>, <code>docs/getting-started/how-gas-city-works.md</code>.</p>
+    <p>Primary sources: EC2 <code>DescribeInstances</code> and <code>DescribeInstanceTypes</code> on 25 Sep 2026; <code>gascity-aws-deploy/docker-compose.yml</code>, <code>deploy.sh</code>, <code>deploy-now.sh</code>, <code>DEPLOYMENT_SUMMARY.md</code>, <code>FIX_GUIDE.md</code>, <code>simple_gc_api_fixed.py</code>, <code>bot/telegram_bot.py</code>, <code>gascity/city.toml</code>, <code>config/responsibilities.json</code>, <code>miniapp/index.html</code>, <code>DEPLOY_ALL_IN_ONE.sh</code>, <code>engdocs/architecture/controller.md</code>, <code>docs/guides/connected-clients.md</code>, <code>docs/getting-started/how-gas-city-works.md</code>. Published on-demand rate for <code>m7i.xlarge</code> Linux in ap-southeast-1: $0.252 per hour.</p>
     <p>Open this file in a browser. It has no external assets.</p>
   </div>
 </footer>
