@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gas City on EC2 — Infrastructure Architecture Report</title>
+<style>
+  :root {
+    --ink: #1a1814;
+    --muted: #5c564c;
+    --faint: #8a8378;
+    --paper: #f6f3ec;
+    --card: #fffdf8;
+    --line: #e4ddd0;
+    --line-strong: #cfc6b6;
+    --copper: #9a4312;
+    --copper-soft: #f4e6d8;
+    --steel: #1e3a5f;
+    --steel-soft: #e7eef6;
+    --pine: #1d5c45;
+    --pine-soft: #e5f2eb;
+    --amber: #8a5a00;
+    --amber-soft: #f8efd8;
+    --crimson: #8c2f2f;
+    --crimson-soft: #f8e8e6;
+    --shadow: 0 1px 0 rgba(26, 24, 20, 0.04), 0 12px 32px rgba(26, 24, 20, 0.05);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 480px at 100% -10%, #efe4d2 0%, transparent 55%),
+      var(--paper);
+    font: 17px/1.55 "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+  }
+  a { color: var(--steel); }
+  code, .mono {
+    font-family: "IBM Plex Mono", "ui-monospace", "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+  }
+  code {
+    background: #efeae1;
+    padding: 0.08em 0.35em;
+    border-radius: 4px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+  header.mast {
+    padding: 56px 0 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  .kicker {
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font: 600 12px/1.2 "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--copper);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-weight: 560;
+    font-size: clamp(36px, 5vw, 58px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 16px;
+  }
+  .lede { font-size: 1.18rem; max-width: 46rem; margin: 0; color: #2c2924; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 10px 22px;
+    margin-top: 22px;
+    font: 13px/1.4 "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--muted);
+  }
+  nav.toc {
+    position: sticky; top: 0; z-index: 4;
+    background: rgba(246, 243, 236, 0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav.toc .wrap {
+    display: flex; gap: 18px; overflow-x: auto;
+    padding: 12px 28px;
+    font: 13px/1.2 "Avenir Next", "Segoe UI", sans-serif;
+  }
+  nav.toc a { color: var(--muted); text-decoration: none; white-space: nowrap; }
+  nav.toc a:hover { color: var(--ink); }
+  main { padding: 36px 0 80px; }
+  section { margin: 0 0 56px; }
+  h2 {
+    font-size: 1.7rem;
+    font-weight: 560;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+    padding-top: 8px;
+  }
+  h3 { font-size: 1.15rem; margin: 22px 0 8px; font-weight: 600; }
+  p { margin: 0 0 12px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 800px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 18px 16px;
+    box-shadow: var(--shadow);
+  }
+  .card h3 { margin-top: 0; }
+  .stat {
+    font: 600 28px/1.1 "Avenir Next", "Segoe UI", sans-serif;
+    letter-spacing: -0.03em;
+  }
+  .stat span { display: block; margin-top: 6px; font: 13px/1.35 "Avenir Next", "Segoe UI", sans-serif; color: var(--muted); font-weight: 500; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    font-size: 0.95rem;
+  }
+  th, td { text-align: left; padding: 10px 14px; vertical-align: top; border-bottom: 1px solid var(--line); }
+  th {
+    font: 600 12px/1.3 "Avenir Next", "Segoe UI", sans-serif;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: #faf7f1;
+  }
+  tr:last-child td { border-bottom: 0; }
+  .pill {
+    display: inline-block;
+    font: 600 11px/1 "Avenir Next", "Segoe UI", sans-serif;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: 999px;
+    vertical-align: 1px;
+  }
+  .pill.live { background: var(--pine-soft); color: var(--pine); }
+  .pill.declared { background: var(--steel-soft); color: var(--steel); }
+  .pill.warn { background: var(--amber-soft); color: var(--amber); }
+  .pill.bad { background: var(--crimson-soft); color: var(--crimson); }
+  .callout {
+    border-left: 3px solid var(--copper);
+    background: var(--copper-soft);
+    padding: 14px 16px;
+    border-radius: 0 12px 12px 0;
+    margin: 16px 0;
+  }
+  .callout strong { font-family: "Avenir Next", "Segoe UI", sans-serif; font-size: 0.92rem; }
+  ol.findings { padding-left: 0; list-style: none; counter-reset: f; }
+  ol.findings > li {
+    counter-increment: f;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px 16px 14px 64px;
+    margin: 0 0 12px;
+    position: relative;
+    box-shadow: var(--shadow);
+  }
+  ol.findings > li::before {
+    content: counter(f, decimal-leading-zero);
+    position: absolute;
+    left: 16px; top: 16px;
+    font: 600 14px/1 "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--copper);
+  }
+  .diagram {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .diagram svg { display: block; min-width: 720px; width: 100%; height: auto; }
+  footer.colophon {
+    border-top: 1px solid var(--line);
+    padding: 28px 0 48px;
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  .src { font-size: 0.88rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="wrap">
+    <p class="kicker">Architecture report · EC2 deployment</p>
+    <h1>Gas City on one public instance</h1>
+    <p class="lede">A single Ubuntu machine in the default VPC is the entire factory: API, human approval, and the status page. The package declares a Gas City container. The notes that record the live box describe a Flask stand-in on the same port.</p>
+    <div class="meta">
+      <span>Sources: <code>gascity-aws-deploy/</code>, <code>DEPLOY_ALL_IN_ONE.sh</code>, controller and extmsg docs</span>
+      <span>Recorded instance: <span class="mono">13.214.162.41</span> · ap-southeast-1</span>
+      <span>Compiled 25 Sep 2026</span>
+    </div>
+  </div>
+</header>
+<nav class="toc">
+  <div class="wrap">
+    <a href="#verdict">Verdict</a>
+    <a href="#aws">AWS footprint</a>
+    <a href="#topologies">Two topologies</a>
+    <a href="#box">What is on the box</a>
+    <a href="#flow">Approval path</a>
+    <a href="#city">City the image would run</a>
+    <a href="#wire">Wire contract</a>
+    <a href="#state">What survives reboot</a>
+    <a href="#trust">Trust boundary</a>
+    <a href="#findings">Findings</a>
+  </div>
+</nav>
+<main>
+  <div class="wrap">
+
+    <section id="verdict">
+      <h2>Verdict</h2>
+      <p>The deployment is a <strong>one-tenant software factory demo</strong>, not a multi-tenant control plane. Scaling, in the scripts, means launching another copy of the same instance. Isolation is the instance boundary. There is no load balancer, no private subnet, no database service, and no Elastic IP.</p>
+      <div class="grid-3">
+        <div class="card"><div class="stat">t3.medium<span>2 vCPU · 4 GiB · 30 GiB gp3</span></div></div>
+        <div class="card"><div class="stat">5 ports<span>22, 80, 443, 7375, 8080 open to the internet</span></div></div>
+        <div class="card"><div class="stat">~$33<span>package estimate per instance / month</span></div></div>
+      </div>
+      <div class="callout">
+        <strong>How this report was built.</strong>
+        It is reconstructed from the deploy scripts and the notes that describe the running host. It is not a live <span class="mono">DescribeInstances</span> snapshot. The address <span class="mono">13.214.162.41</span> is the public IP written down in <span class="mono">DEPLOYMENT_SUMMARY.md</span> and <span class="mono">FIX_GUIDE.md</span>. The launch scripts do not allocate an Elastic IP, so a stop/start replaces it.
+      </div>
+    </section>
+
+    <section id="aws">
+      <h2>AWS footprint</h2>
+      <p>Every launch path — <span class="mono">deploy.sh</span>, <span class="mono">deploy-now.sh</span>, and <span class="mono">DEPLOY_ALL_IN_ONE.sh</span> — creates the same shape: default VPC, one security group, one key pair, one on-demand instance, user-data that installs Docker.</p>
+      <div class="diagram" aria-label="AWS layout">
+        <svg viewBox="0 0 980 420" role="img">
+          <rect x="8" y="8" width="964" height="404" rx="16" fill="#f4efe6" stroke="#cfc6b6"/>
+          <text x="28" y="40" fill="#9a4312" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600" letter-spacing="1.5">AWS ACCOUNT · REGION FROM DOPPLER</text>
+          <text x="28" y="62" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="15">Recorded deployment: ap-southeast-1. Script default if unset: us-east-1.</text>
+
+          <rect x="28" y="84" width="924" height="308" rx="14" fill="#fffdf8" stroke="#1e3a5f"/>
+          <text x="48" y="112" fill="#1e3a5f" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">DEFAULT VPC · PUBLIC ADDRESSING</text>
+
+          <rect x="48" y="132" width="250" height="230" rx="12" fill="#e7eef6" stroke="#1e3a5f"/>
+          <text x="66" y="160" fill="#1e3a5f" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">SECURITY GROUP</text>
+          <text x="66" y="182" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">gascity-sg</text>
+          <text x="66" y="210" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">tcp/22 SSH</text>
+          <text x="66" y="232" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">tcp/80 HTTP</text>
+          <text x="66" y="254" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">tcp/443 HTTPS</text>
+          <text x="66" y="276" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">tcp/7375 API</text>
+          <text x="66" y="298" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">tcp/8080 dashboard</text>
+          <text x="66" y="332" fill="#8c2f2f" font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" font-weight="600">CIDR 0.0.0.0/0 ON ALL</text>
+
+          <rect x="330" y="132" width="390" height="230" rx="12" fill="#f4e6d8" stroke="#9a4312"/>
+          <text x="348" y="160" fill="#9a4312" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">EC2 · gascity-server</text>
+          <text x="348" y="186" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="15">Ubuntu 22.04 Jammy amd64</text>
+          <text x="348" y="208" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">Canonical AMI, newest match</text>
+          <text x="348" y="236" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">t3.medium</text>
+          <text x="348" y="258" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">/dev/sda1 · 30 GiB gp3</text>
+          <text x="348" y="286" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Key pair gascity-key</text>
+          <text x="348" y="314" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">13.214.162.41</text>
+          <text x="348" y="338" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">auto-assigned public IP</text>
+
+          <rect x="748" y="132" width="180" height="230" rx="12" fill="#faf7f1" stroke="#cfc6b6"/>
+          <text x="764" y="160" fill="#5c564c" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">NOT IN THE PLAN</text>
+          <text x="764" y="190" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Elastic IP</text>
+          <text x="764" y="212" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">ALB / TLS</text>
+          <text x="764" y="234" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Private subnet</text>
+          <text x="764" y="256" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">RDS / Dolt host</text>
+          <text x="764" y="278" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Instance profile</text>
+          <text x="764" y="300" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">CloudWatch</text>
+          <text x="764" y="322" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">ASG / backup</text>
+        </svg>
+      </div>
+      <h3>Launch identity</h3>
+      <table>
+        <thead><tr><th>Resource</th><th>Name / value</th><th>Where it is set</th></tr></thead>
+        <tbody>
+          <tr><td>Instance tag</td><td><code>gascity-server</code></td><td><code>deploy.sh</code>, <code>deploy-now.sh</code></td></tr>
+          <tr><td>Instance type</td><td><code>t3.medium</code> unless <code>INSTANCE_TYPE</code> overrides</td><td>Doppler secret or prompt</td></tr>
+          <tr><td>AMI</td><td>Newest <code>ubuntu-jammy-22.04-amd64-server</code>, owner <code>099720109477</code></td><td>Resolved at launch time</td></tr>
+          <tr><td>Volume</td><td>30 GiB gp3 on <code>/dev/sda1</code></td><td>Block-device mapping. Delete-on-termination left at the AWS default.</td></tr>
+          <tr><td>Placement</td><td>Default VPC of the chosen region. No subnet, no AZ pin.</td><td><code>describe-vpcs --filters isDefault=true</code></td></tr>
+          <tr><td>Recorded region</td><td>ap-southeast-1 for the host at <code>13.214.162.41</code></td><td><code>DEPLOYMENT_SUMMARY.md</code>. Scripts fall back to <code>us-east-1</code>.</td></tr>
+          <tr><td>Secrets</td><td>Doppler project <code>gascity</code>, config <code>prd</code></td><td><code>deploy.sh</code> mints a 30-day service token into user-data. <code>deploy-now.sh</code> writes bot tokens into <code>/opt/gascity/.env</code> via user-data.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="topologies">
+      <h2>Two topologies share one port</h2>
+      <p>The repository contains a declared container stack and a separate account of what was actually left running. Both want TCP 7375. They cannot be the API at the same time.</p>
+      <div class="grid-2">
+        <article class="card">
+          <h3><span class="pill declared">Declared</span> Compose stack</h3>
+          <p><code>docker-compose.yml</code> is what <code>deploy-now.sh</code> downloads onto the host and starts, and what <code>deploy.sh</code> expects an operator to upload to <code>/opt/gascity</code>.</p>
+          <ul>
+            <li><code>gascity</code> — image <code>gastownhall/gascity:latest</code>, command <code>gc start</code>, publish <code>7375</code>.</li>
+            <li><code>telegram-bot</code> — agent name <code>you-agent</code>.</li>
+            <li><code>telegram-bot-nordice</code> — agent name <code>nordice-agent</code>.</li>
+            <li><code>miniapp</code> — <code>nginx:alpine</code>, publish <code>8080:80</code>.</li>
+          </ul>
+          <p class="src"><code>deploy.sh</code> also installs a systemd oneshot, <code>gascity.service</code>, whose start line is <code>doppler run -- docker-compose up -d</code>.</p>
+        </article>
+        <article class="card">
+          <h3><span class="pill live">Recorded live</span> Host processes</h3>
+          <p><code>DEPLOYMENT_SUMMARY.md</code> and <code>FIX_GUIDE.md</code> describe the host after the demo was brought up.</p>
+          <ul>
+            <li>Flask process <code>simple_gc_api.py</code> on <code>0.0.0.0:7375</code>, log <code>/opt/gascity/flask.log</code>.</li>
+            <li>Two Telegram bots, logs <code>/opt/gascity/bot-*.log</code>.</li>
+            <li>Nginx serving the mini app, error log <code>/var/log/nginx/error.log</code> — the host nginx path, not the alpine container’s log.</li>
+            <li>Inbound <code>POST /v0/extmsg/inbound</code> returning 500 at the time of those notes.</li>
+          </ul>
+          <p class="src">The fixed stand-in is <code>simple_gc_api_fixed.py</code>. Its own module docstring calls it a mock.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="box">
+      <h2>What is on the box</h2>
+      <div class="diagram" aria-label="Process layout inside the instance">
+        <svg viewBox="0 0 980 520" role="img">
+          <rect x="8" y="8" width="964" height="504" rx="16" fill="#f4efe6" stroke="#cfc6b6"/>
+          <text x="28" y="40" fill="#9a4312" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600" letter-spacing="1.4">UBUNTU 22.04 · /opt/gascity</text>
+
+          <rect x="28" y="64" width="450" height="420" rx="12" fill="#fffdf8" stroke="#1e3a5f"/>
+          <text x="46" y="92" fill="#1e3a5f" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">DECLARED COMPOSE</text>
+
+          <rect x="46" y="110" width="414" height="92" rx="8" fill="#e7eef6" stroke="#1e3a5f"/>
+          <text x="62" y="136" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">gascity · gastownhall/gascity:latest</text>
+          <text x="62" y="158" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">command: gc start · GC_CITY_PATH=/city</text>
+          <text x="62" y="180" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">./gascity → /city · volume gascity-data → /city/.gc</text>
+
+          <rect x="46" y="214" width="198" height="88" rx="8" fill="#faf7f1" stroke="#cfc6b6"/>
+          <text x="60" y="240" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="12">telegram-bot</text>
+          <text x="60" y="262" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">python:3.11-slim</text>
+          <text x="60" y="282" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">you-agent</text>
+
+          <rect x="262" y="214" width="198" height="88" rx="8" fill="#faf7f1" stroke="#cfc6b6"/>
+          <text x="276" y="240" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="12">telegram-bot-nordice</text>
+          <text x="276" y="262" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">same image build</text>
+          <text x="276" y="282" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">nordice-agent</text>
+
+          <rect x="46" y="316" width="414" height="70" rx="8" fill="#e5f2eb" stroke="#1d5c45"/>
+          <text x="62" y="344" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">miniapp · nginx:alpine · :8080 → :80</text>
+          <text x="62" y="366" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">./miniapp + shared ./miniapp-status</text>
+
+          <rect x="46" y="400" width="414" height="64" rx="8" fill="#f8efd8" stroke="#8a5a00"/>
+          <text x="62" y="426" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">systemd gascity.service (deploy.sh only)</text>
+          <text x="62" y="448" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="13">oneshot, RemainAfterExit, After=docker.service</text>
+
+          <rect x="498" y="64" width="450" height="420" rx="12" fill="#fffdf8" stroke="#9a4312"/>
+          <text x="516" y="92" fill="#9a4312" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" font-weight="600">RECORDED ON THE LIVE HOST</text>
+
+          <rect x="516" y="110" width="414" height="110" rx="8" fill="#f4e6d8" stroke="#9a4312"/>
+          <text x="532" y="138" fill="#1a1814" font-family="ui-monospace, Menlo, monospace" font-size="13">python3 simple_gc_api.py</text>
+          <text x="532" y="162" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">Flask on 0.0.0.0:7375</text>
+          <text x="532" y="184" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">in-memory clients + queues</text>
+          <text x="532" y="204" fill="#8c2f2f" font-family="Palatino, Georgia, serif" font-size="14">inbound 500 at time of the notes</text>
+
+          <rect x="516" y="234" width="414" height="78" rx="8" fill="#faf7f1" stroke="#cfc6b6"/>
+          <text x="532" y="262" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Two long-polling Telegram bots</text>
+          <text x="532" y="286" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">logs under /opt/gascity/bot-*.log</text>
+
+          <rect x="516" y="326" width="414" height="70" rx="8" fill="#e5f2eb" stroke="#1d5c45"/>
+          <text x="532" y="354" fill="#1a1814" font-family="Palatino, Georgia, serif" font-size="14">Host nginx · :8080</text>
+          <text x="532" y="376" fill="#5c564c" font-family="Palatino, Georgia, serif" font-size="14">static index.html, polls status JSON</text>
+
+          <rect x="516" y="410" width="414" height="54" rx="8" fill="#f8e8e6" stroke="#8c2f2f"/>
+          <text x="532" y="442" fill="#8c2f2f" font-family="Palatino, Georgia, serif" font-size="14">No supervisor, no beads store, no tmux sessions</text>
+        </svg>
+      </div>
+
+      <h3>Listeners</h3>
+      <table>
+        <thead><tr><th>Port</th><th>Declared owner</th><th>Recorded owner</th><th>Public?</th></tr></thead>
+        <tbody>
+          <tr><td>22</td><td>sshd</td><td>sshd</td><td>Yes, world-open</td></tr>
+          <tr><td>80 / 443</td><td>Nothing in compose or user-data</td><td>Nothing described</td><td>Opened in the security group anyway</td></tr>
+          <tr><td>7375</td><td><code>gc</code> HTTP API inside the gascity container</td><td>Flask mock</td><td>Yes. Real Gas City defaults this port to localhost.</td></tr>
+          <tr><td>8080</td><td>nginx container</td><td>Host nginx</td><td>Yes, cleartext</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="flow">
+      <h2>Approval path</h2>
+      <p>Human-in-the-loop is a text protocol, not a Gas City primitive. An agent (or the test script) emits one line. Python decides who may answer. The dashboard is a browser poll of JSON files.</p>
+      <div class="diagram" aria-label="Approval sequence">
+        <svg viewBox="0 0 980 250" role="img">
+          <rect x="8" y="8" width="964" height="234" rx="16" fill="#fffdf8" stroke="#e4ddd0"/>
+          <g font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" font-weight="600">
+            <rect x="28" y="36" width="150" height="44" rx="8" fill="#e7eef6" stroke="#1e3a5f"/>
+            <text x="46" y="63" fill="#1e3a5f">TEST OR AGENT</text>
+            <rect x="210" y="36" width="150" height="44" rx="8" fill="#f4e6d8" stroke="#9a4312"/>
+            <text x="248" y="63" fill="#9a4312">:7375 API</text>
+            <rect x="392" y="36" width="170" height="44" rx="8" fill="#faf7f1" stroke="#cfc6b6"/>
+            <text x="418" y="63" fill="#1a1814">TELEGRAM BOT</text>
+            <rect x="594" y="36" width="160" height="44" rx="8" fill="#f8efd8" stroke="#8a5a00"/>
+            <text x="628" y="63" fill="#8a5a00">TELEGRAM</text>
+            <rect x="786" y="36" width="166" height="44" rx="8" fill="#e5f2eb" stroke="#1d5c45"/>
+            <text x="820" y="63" fill="#1d5c45">:8080 PAGE</text>
+          </g>
+          <g font-family="Palatino, Georgia, serif" font-size="14" fill="#1a1814">
+            <text x="40" y="120">1. APPROVAL_NEEDED: type | title | details</text>
+            <text x="40" y="146">2. API queues the line for registered clients (mock broadcasts to every client).</text>
+            <text x="40" y="172">3. Bot polls POST /v0/extmsg/outbound every 3s, then sends inline buttons.</text>
+            <text x="40" y="198">4. A click writes miniapp-status/&lt;section&gt;.json and posts APPROVAL_GRANTED or REJECTED.</text>
+            <text x="40" y="224">5. The page fetches those JSON files every 2 seconds.</text>
+          </g>
+        </svg>
+      </div>
+
+      <h3>Who is allowed to approve</h3>
+      <p>Policy lives in <code>config/responsibilities.json</code>. The checked-in file has placeholder Telegram ids of <code>0</code>. The live notes say the host was loaded with real ids.</p>
+      <table>
+        <thead><tr><th>Responsibility</th><th>Holders</th><th>Quorum in JSON</th></tr></thead>
+        <tbody>
+          <tr><td><code>deployment_approval</code></td><td>you, nordice</td><td>2</td></tr>
+          <tr><td><code>security_review</code></td><td>nordice</td><td>1</td></tr>
+          <tr><td><code>code_review</code></td><td>nordice</td><td>1</td></tr>
+          <tr><td><code>architecture_review</code></td><td>you</td><td>1</td></tr>
+          <tr><td><code>budget_approval</code></td><td>you</td><td>1</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        <strong>Quorum does not cross processes.</strong>
+        Each bot keeps <code>active_approvals</code> in its own memory. When a message is fanned out, <code>send_approval_request_sync</code> builds a new approval id and sets <code>approvers</code> to only the recipient of that send. A deployment that needs two approvals can never reach <code>required_count</code> inside either process. The page’s “needs 2 approvals” line is static HTML in <code>miniapp/index.html</code>, not a count read from the JSON files.
+      </div>
+      <p>Section titles the bot will persist are a fixed map: Hero Section, Features Section, Auth Form, Footer Section, Final Deployment. Any other title is logged and dropped, so the dashboard never moves.</p>
+    </section>
+
+    <section id="city">
+      <h2>The city the image would run</h2>
+      <p>If the compose service actually stays up, <code>gc start</code> is the Gas City supervisor entry. It registers the city and runs the per-city controller: watch <code>city.toml</code>, reconcile sessions, evaluate orders. The mounted city is small.</p>
+      <table>
+        <thead><tr><th>city.toml</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>[city] name = "my-city"</code></td><td>One city directory. Identity is fixed for the life of the controller.</td></tr>
+          <tr><td><code>[session] provider = "tmux"</code></td><td>Agent sessions are tmux sessions inside the container.</td></tr>
+          <tr><td><code>[extmsg] enabled = true</code></td><td>External clients may register and open a reply stream.</td></tr>
+          <tr><td><code>[[agent]] deploy-agent</code></td><td>One worker. Provider <code>claude</code>. Prompt file tells it to emit <code>APPROVAL_NEEDED</code> lines. Working directory <code>.</code></td></tr>
+        </tbody>
+      </table>
+      <p>No rigs, no formulas, no orders, no pack imports. On the progressive capability ladder that is a city with sessions, tasks, and external messaging switched on. Graph orchestration — the reason the platform exists — has nothing to run.</p>
+      <h3>What a full city keeps that this box does not</h3>
+      <div class="grid-3">
+        <div class="card"><h3>Bead store</h3><p>Durable work. Tasks, mail, session records, and convoys are beads. The mock keeps queues in process memory, so a restart empties the factory’s inbox.</p></div>
+        <div class="card"><h3>Orchestrator</h3><p>Reconciles live sessions to <code>city.toml</code> on a ticker (default 30s) and on file change. One controller per city, locked with <code>.gc/controller.lock</code>.</p></div>
+        <div class="card"><h3>Event bus</h3><p>Append-only activity other humans and agents watch. The mini app does not subscribe to it. It polls five JSON files.</p></div>
+      </div>
+      <p>The six configuration primitives are still the right map of the product, even though this instance only fills two of them:</p>
+      <table>
+        <thead><tr><th>Primitive</th><th>On this deployment</th></tr></thead>
+        <tbody>
+          <tr><td>Agent</td><td>One prompt, <code>agents/deploy-agent/prompt.md</code>. Two Telegram bots are clients, not city agents.</td></tr>
+          <tr><td>Bead</td><td>Absent on the recorded host. Present only if <code>gc start</code> is the process on 7375 and <code>/city/.gc</code> is the data volume.</td></tr>
+          <tr><td>Formula</td><td>None shipped in <code>gascity/</code>.</td></tr>
+          <tr><td>Rig</td><td>None. The agent’s <code>dir</code> is the city directory itself.</td></tr>
+          <tr><td>Pack</td><td>The city directory is the pack: <code>city.toml</code> plus one prompt.</td></tr>
+          <tr><td>Event</td><td>The product fires events. This demo writes status files.</td></tr>
+        </tbody>
+      </table>
+      <p class="src">Image tag <code>gastownhall/gascity:latest</code> is unpinned. A later boot can pull a different build without a compose change.</p>
+    </section>
+
+    <section id="wire">
+      <h2>Wire contract</h2>
+      <p>The bot was written against the real external-messaging registration call, then given a poll loop the real API does not serve. The mock was written against a third shape. The three do not meet.</p>
+      <table>
+        <thead><tr><th></th><th>Gas City supervisor</th><th>Telegram bot</th><th>Flask mock</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Register</td>
+            <td><code>POST /v0/extmsg/clients</code> with <code>provider: llm-client</code>. Returns <code>client_id</code> and a bearer.</td>
+            <td>Same call. Header <code>X-GC-Request: 1</code>.</td>
+            <td>Same path. Returns two random UUIDs. Ignores <code>provider</code>.</td>
+          </tr>
+          <tr>
+            <td>Receive replies</td>
+            <td><code>GET /v0/extmsg/llm-client/{account}/{conversation}/subscribe</code> SSE, <code>Authorization: Bearer</code>.</td>
+            <td>Imports <code>sseclient</code> and never calls it. Polls <code>POST /v0/extmsg/outbound</code> every 3 seconds.</td>
+            <td>Implements that poll. Drains and deletes the in-memory queue.</td>
+          </tr>
+          <tr>
+            <td>Send a turn</td>
+            <td><code>POST /v0/extmsg/inbound</code> fields <code>provider</code>, <code>account_id</code>, <code>conversation_id</code>, <code>content</code>.</td>
+            <td>Sends those fields.</td>
+            <td>Reads <code>client_id</code> and <code>message</code>. A bot payload therefore has an empty body.</td>
+          </tr>
+          <tr>
+            <td>Health</td>
+            <td><code>GET /v0/readiness</code></td>
+            <td>Debugging notes also mention <code>/health</code>.</td>
+            <td><code>GET /health</code> → <code>{"status":"ok","clients":N}</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><code>DEBUGGING_GUIDE.md</code> tells an operator to grep bot logs for <code>Received event from Gas City</code>. The current <code>poll_for_messages</code> loop never writes that line. A green grep is not available as a health check.</p>
+    </section>
+
+    <section id="state">
+      <h2>What survives a reboot</h2>
+      <table>
+        <thead><tr><th>State</th><th>Where</th><th>After reboot</th><th>After instance replacement</th></tr></thead>
+        <tbody>
+          <tr><td>Approval queues</td><td>Flask process memory</td><td>Gone</td><td>Gone</td></tr>
+          <tr><td>Registered extmsg clients</td><td>Same memory. Real Gas City would persist client records with the city.</td><td>Bots must register again</td><td>Gone</td></tr>
+          <tr><td>In-flight quorum</td><td>Each bot’s <code>active_approvals</code> dict</td><td>Gone</td><td>Gone</td></tr>
+          <tr><td>Dashboard status</td><td><code>miniapp-status/*.json</code> on the root volume</td><td>Kept, if the volume is</td><td>Gone with the 30 GiB gp3 disk</td></tr>
+          <tr><td>City runtime (<code>.gc</code>, beads, controller lock)</td><td>Named volume <code>gascity-data</code>, only if compose created it</td><td>Kept on the instance’s Docker disk</td><td>Gone. No snapshot policy in the scripts.</td></tr>
+          <tr><td>Containers</td><td><code>restart: unless-stopped</code></td><td>Docker brings them back if they were created</td><td>User-data runs once, on first boot</td></tr>
+          <tr><td>Public IP</td><td>Auto-assigned</td><td>Changes on stop/start</td><td>New address</td></tr>
+        </tbody>
+      </table>
+      <p>Multi-tenant, in the deployment summary, means another <code>t3.medium</code> per tenant at the same estimate. Ten tenants are ten of these machines. Nothing in the security group, the city name, or the Docker network carves tenants inside one host.</p>
+    </section>
+
+    <section id="trust">
+      <h2>Trust boundary</h2>
+      <div class="grid-2">
+        <article class="card">
+          <h3><span class="pill bad">Exposed</span> Data plane</h3>
+          <p>SSH, the API, and the status page accept the whole internet. The API has no TLS terminator in front of it. Ports 80 and 443 are authorized and unused, so they read as a future HTTPS plan that was never wired.</p>
+          <p>The mock’s register call issues a token and the poll checks it. The inbound route does not. Anyone who can reach <code>:7375</code> can enqueue <code>APPROVAL_NEEDED</code> lines.</p>
+        </article>
+        <article class="card">
+          <h3><span class="pill warn">User-data</span> Secret handling</h3>
+          <p><code>deploy.sh</code> embeds a Doppler service token in user-data. <code>deploy-now.sh</code> embeds Telegram bot tokens in the same channel, then writes them to <code>/opt/gascity/.env</code>. User-data remains readable to principals who can describe instance attributes.</p>
+          <p>There is no instance profile. AWS credentials used to launch the box stay on the operator workstation (and in Doppler), which is the right split — and then the guest is handed a long-lived Doppler token anyway.</p>
+        </article>
+      </div>
+      <p>The compose network is the only private path: bots use <code>http://gascity:7375</code>. Publishing <code>7375:7375</code> punches that path out to the security group. A city process that followed the product default would listen on localhost inside the container; the publish mapping is what makes it a public API.</p>
+    </section>
+
+    <section id="findings">
+      <h2>Findings</h2>
+      <ol class="findings">
+        <li>
+          <strong>The recorded host is the mock, and the package still boots the product.</strong>
+          Operators following <code>FIX_GUIDE.md</code> bind Flask to 7375. Operators following <code>deploy-now.sh</code> bind <code>gc start</code> to 7375. The debugging guide, the summary, and the compose file describe different machines. Pick one listener before treating the instance as a city.
+        </li>
+        <li>
+          <strong>The bot, the mock, and the supervisor speak three dialects.</strong>
+          Registration matches. Replies do not: the product is SSE, the bot polls <code>/v0/extmsg/outbound</code>, and the mock is the only thing that implements that poll. Inbound field names also differ, so a grant posted by the bot is invisible to the mock’s parser.
+        </li>
+        <li>
+          <strong>Two-person deployment approval cannot complete.</strong>
+          Quorum state is per process and per recipient. <code>deployment_approval</code> asks for two yes-votes and each button only has one eligible voter. A reject completes the record; a pair of approves does not.
+        </li>
+        <li>
+          <strong>The public surface is larger than the demo.</strong>
+          Five ports from <code>0.0.0.0/0</code>, cleartext API and dashboard, inbound approval injection on the mock, and secrets in user-data. SSH on the same group is the break-glass and the front door.
+        </li>
+        <li>
+          <strong>Durability is the root volume plus a Docker named volume, with no snapshot.</strong>
+          Approval state that matters to a human is a handful of JSON files. City state, if the real process is ever the one on 7375, lives in <code>gascity-data</code> on that same disk. Replacing the instance replaces the factory.
+        </li>
+        <li>
+          <strong>The instance size matches a demo and not an agent fleet.</strong>
+          <code>t3.medium</code> is 4 GiB for Ubuntu, Docker, two Python pollers, nginx, and — in the declared topology — a tmux-backed Claude session plus the controller. No swap is configured in user-data.
+        </li>
+        <li>
+          <strong>“One city per tenant” is the whole tenancy model.</strong>
+          That is a legitimate isolation boundary. It is not a control plane: no shared identity, no per-tenant network, no central ledger. Cost scales linearly with the package estimate of about $33 per instance plus data transfer.
+        </li>
+        <li>
+          <strong>To run Gas City here, the mock has to leave port 7375.</strong>
+          The city directory and <code>[extmsg] enabled = true</code> are already the right switch. The bot would subscribe to the SSE stream documented in <code>docs/guides/connected-clients.md</code>, keep quorum in one place both bots can see, and stop publishing 7375 to the world — or put TLS and an allowlist in front of it. Formulas, rigs, and a durable bead backend are what turn this host from an approval toy into an orchestrator.
+        </li>
+      </ol>
+    </section>
+  </div>
+</main>
+<footer class="colophon">
+  <div class="wrap">
+    <p>Primary sources: <code>gascity-aws-deploy/docker-compose.yml</code>, <code>deploy.sh</code>, <code>deploy-now.sh</code>, <code>DEPLOYMENT_SUMMARY.md</code>, <code>FIX_GUIDE.md</code>, <code>simple_gc_api_fixed.py</code>, <code>bot/telegram_bot.py</code>, <code>gascity/city.toml</code>, <code>config/responsibilities.json</code>, <code>miniapp/index.html</code>, <code>DEPLOY_ALL_IN_ONE.sh</code>, <code>engdocs/architecture/controller.md</code>, <code>docs/guides/connected-clients.md</code>, <code>docs/getting-started/how-gas-city-works.md</code>.</p>
+    <p>Open this file in a browser. It has no external assets.</p>
+  </div>
+</footer>
+</body>
+</html>
