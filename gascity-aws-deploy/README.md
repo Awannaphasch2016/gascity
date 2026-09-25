@@ -6,6 +6,7 @@ Complete deployment package for Gas City with Telegram bot and Doppler secrets m
 
 **IMPORTANT: Read these first!**
 
+- **[infrastructure-overview.html](./infrastructure-overview.html)** — Architecture report of the EC2 deployment (open in a browser)
 - **[DEPLOYMENT_SUMMARY.md](./DEPLOYMENT_SUMMARY.md)** ⭐ **START HERE** - Complete overview of what's deployed
 - **[FIX_GUIDE.md](./FIX_GUIDE.md)** ⚠️ **ACTION NEEDED** - Fix Flask API (2 min)
 - **[DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md)** - Troubleshooting guide
